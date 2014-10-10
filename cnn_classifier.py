@@ -35,9 +35,39 @@ class BaseCNNClassifier:
         
         if init == 'random':
             self.cnn = init_random(architecture)
+        # Compile the CNN prediction functions.
+        test_samples = theano.tensor4('test_samples')
+        self._predict_proba = theano.function(
+            [test_samples],
+            self.cnn.forward_pass(test_samples)
+        )
+        self._predict_label = theano.function(
+            [test_samples],
+            T.argmax(self.cnn.forward_pass(test_samples), axis=1)
+        )
 
     def train(self, images, labels):
-        
+        # Use theano's FFT convolutions.
+        mode = theano.compile.get_default_mode()
+        mode = mode.including('conv_fft_valid', 'conv_fft_full')
+
+        # Run the optimizer on the CNN cost function.        
+        self.optimizer.optimize(
+            images,
+            labels,
+            self.cnn.cost_function,
+            self.cnn.parameters(),
+            compile_mode=mode
+        )
+
+    def predict_proba(self, images, labels):
+        return self._predict_proba(images.to_array())
+
+    def predict_label(self, images):
+        return self._predict_proba(images.to_array())
+
+class CNNClassifier(BaseCNNClassifier, ClassifierMixin):
+    pass
 
 def init_random(architecture, nb_channels, nb_classes):
     """ Initialize a convolutional neural network at random given an architecture. All
@@ -233,7 +263,7 @@ class SoftmaxLayer(Layer):
         return [self.weights, self.biases]
     
 class FCLayer(Layer):
-    """ Fully connected layer with ReLU non-linearity.
+    """ Fully connected layer with sigmoid non-linearity.
     """
     
     def __init__(self, init_weights, init_biases):
@@ -254,7 +284,7 @@ class FCLayer(Layer):
         self.biases = theano.shared(init_biases)
 
     def forward_pass(self, input_matrix):
-        return T.maxmium(0, T.dot(input_matrix, self.weights) + self.biases)
+        return T.sigmoid(T.dot(input_matrix, self.weights) + self.biases)
 
     def parameters(self):
         return [self.weights, self.biases]
