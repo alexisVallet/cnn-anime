@@ -1,17 +1,17 @@
 import theano
 import theano.tensor as T
+from theano.tensor.signal.downsample import max_pool_2d
 import numpy as np
 
-import classifier
-import optimize
+from classifier import ClassifierMixin
 
 class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
     def __init__(self, architecture, optimizer, init='random', nb_channels=3):
         """ Initializes a convolutional neural network with a specific
-            architecture, optimization method for training and initialization
-            procedure.
+            architecture, optimization method for training and 
+            initialization procedure.
 
         Arguments:
             architecture
@@ -29,14 +29,12 @@ class BaseCNNClassifier:
                   the method described by Alex Krizhevsky, 2012.
         """
         assert init in ['random']
-        assert isinstance(optimizer, Optimizer)
-        assert np.all([isinstance(l, Layer) for l in architecture])
         self.optimizer = optimizer
         
         if init == 'random':
-            self.cnn = init_random(architecture)
+            self.cnn = init_random(architecture, nb_channels)
         # Compile the CNN prediction functions.
-        test_samples = theano.tensor4('test_samples')
+        test_samples = T.tensor4('test_samples')
         self._predict_proba = theano.function(
             [test_samples],
             self.cnn.forward_pass(test_samples)
@@ -69,7 +67,7 @@ class BaseCNNClassifier:
 class CNNClassifier(BaseCNNClassifier, ClassifierMixin):
     pass
 
-def init_random(architecture, nb_channels, nb_classes):
+def init_random(architecture, nb_channels):
     """ Initialize a convolutional neural network at random given an architecture. All
         weights are initialized by sampling a normal distribution with mean 0 and variance
         10^-2. Biases are initialized at 0.
@@ -90,8 +88,11 @@ def init_random(architecture, nb_channels, nb_classes):
     for layer_arch in architecture:
         if layer_arch[0] == 'conv':
             nb_filters, nb_rows, nb_cols = layer_arch[1:]
-            filters = std * np.random.standard_normal([nb_filters, input_dim, nb_rows, nb_cols])
-            biases = np.zeros([nb_filters])
+            filters = std * np.random.standard_normal([nb_filters, input_dim, nb_rows, nb_cols]).astype(theano.config.floatX)
+            biases = np.zeros(
+                [nb_filters],
+                theano.config.floatX
+            )
             layers.append(ConvLayer(filters, biases))
             nb_conv_mp += 1
             # The input dimension of the next layer will be the number of filters of this
@@ -106,14 +107,20 @@ def init_random(architecture, nb_channels, nb_classes):
             # Fully connected layers, we assume that the number of inputs specified by the
             # user makes sense - it defines the size of the input images.
             nb_inputs, nb_neurons = layer_arch[1:]
-            weights = std * np.random.standard_normal([nb_inputs, nb_neurons])
-            biases = np.zeros([nb_neurons])
+            weights = std * np.random.standard_normal([nb_inputs, nb_neurons]).astype(theano.config.floatX)
+            biases = np.zeros(
+                [nb_neurons],
+                theano.config.floatX
+            )
             layers.append(FCLayer(weights, biases))
             nb_fc += 1
         elif layer_arch[0] == 'softmax':
             nb_inputs, nb_outputs = layer_arch[1:]
-            weights = std * np.random.standard_normal([nb_inputs, nb_outputs])
-            biases = np.zeros([nb_outputs])
+            weights = std * np.random.standard_normal([nb_inputs, nb_outputs]).astype(theano.config.floatX)
+            biases = np.zeros(
+                [nb_outputs],
+                theano.config.floatX
+            )
             layers.append(SoftmaxLayer(weights, biases))
         else:
             raise ValueError(repr(layer_arch) + " is not a valid layer architecture.")
@@ -122,7 +129,7 @@ def init_random(architecture, nb_channels, nb_classes):
         raise ValueError("The architecture should finish with exactly one Softmax layer.")
         
     return CNN(layers[0:nb_conv_mp], layers[nb_conv_mp:nb_conv_mp+nb_fc], layers[-1])
-                    
+
 class CNN:
     """ Convolutional neural network.
     """
@@ -156,7 +163,7 @@ class CNN:
             variables.
         """
         return reduce(lambda params, l1: params + l1.parameters(),
-                      self.conv_mp_layers + self.fc_layers + self.softmax_layer,
+                      self.conv_mp_layers + self.fc_layers + [self.softmax_layer],
                       [])
 
     def forward_pass(self, batch):
@@ -174,7 +181,7 @@ class CNN:
         # First accumulate the convolutional layer forward passes.
         fpass = batch
 
-        for conv_mp_layer in self.conv_map_layers:
+        for conv_mp_layer in self.conv_mp_layers:
             fpass = conv_mp_layer.forward_pass(fpass)
 
         # Reshape the output (batch_size, nb_features, nb_rows, nb_cols)
@@ -210,7 +217,10 @@ class CNN:
         """
         # The cost function basically sums the log softmaxed probabilities for the correct
         # labels. We average the results to make it insensitive to batch size.
-        cost = - T.mean(T.log(self.forward_pass(batch)[:,labels]))
+        cost = - T.mean(
+            T.log(self.forward_pass(batch)[T.arange(batch.shape[0]),
+                                           labels])
+        )
 
         return cost
 
@@ -284,7 +294,7 @@ class FCLayer(Layer):
         self.biases = theano.shared(init_biases)
 
     def forward_pass(self, input_matrix):
-        return T.sigmoid(T.dot(input_matrix, self.weights) + self.biases)
+        return T.nnet.sigmoid(T.dot(input_matrix, self.weights) + self.biases)
 
     def parameters(self):
         return [self.weights, self.biases]
@@ -312,7 +322,7 @@ class ConvLayer(Layer):
         self.filters = theano.shared(init_filters)
         self.biases = theano.shared(init_biases)
         self.filter_shape = init_filters.shape
-        self.fmaps_shape = fmaps.shape
+        self.fmaps_shape = fmaps_shape
         
     def forward_pass(self, fmaps):
         # Computes the raw convolution output.
@@ -322,8 +332,12 @@ class ConvLayer(Layer):
             filter_shape=self.filter_shape,
             image_shape=self.fmaps_shape
         )
+        nb_filters = self.filter_shape[0]
         # Add biases and apply ReLU non-linearity.
-        return T.maximum(0, out_fmaps + self.biases)
+        return T.maximum(
+            0, 
+            out_fmaps +  self.biases.reshape([1, nb_filters, 1, 1])
+        )
 
     def parameters(self):
         return [self.filters, self.biases]
@@ -341,7 +355,8 @@ class MaxPoolLayer(Layer):
         self.pooling_size = pooling_size
 
     def forward_pass(self, fmaps):
-        return T.signal.downsample.max_pool_2d(fmaps, (self.pooling_size, self.pooling_size))
+        
+        return max_pool_2d(fmaps, (self.pooling_size, self.pooling_size))
 
     def parameters(self):
         return []
