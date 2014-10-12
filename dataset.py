@@ -5,11 +5,15 @@ import os, struct
 from array import array
 
 class Dataset:
-    """ A dataset of samples intended for comsumption by a convnet. 3 rules:
+    """ A dataset of samples intended for comsumption by a convnet. 4 rules:
         - a dataset is an iterator of samples (method next())
         - there is a finite, nonzero and known number of samples (len(dataset))
         - all samples are numpy tensors with known and constant shape (list attribute sample_shape)
+        - the samples can be iterated through in random order (method shuffle())
     """
+    def shuffle(self):
+        raise NotImplementedError()
+
     def __iter__(self):
         raise NotImplementedError()
 
@@ -51,6 +55,10 @@ class BaseListDataset(Dataset):
         self.samples = samples
         self.sample_shape = list(self.samples[0].shape)
         assert np.all([list(sample.shape) == self.sample_shape for sample in samples])
+        self.permutation = np.array(range(len(samples)))
+
+    def shuffle(self, permutation):
+        self.permutation = permutation
 
     def __iter__(self):
         self.cur_idx = 0
@@ -62,7 +70,7 @@ class BaseListDataset(Dataset):
             raise StopIteration
         self.cur_idx += 1
 
-        return self.samples[self.cur_idx - 1]
+        return self.samples[self.permutation[self.cur_idx - 1]]
 
     def __len__(self):
         return len(self.samples)
