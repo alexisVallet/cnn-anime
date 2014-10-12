@@ -26,21 +26,24 @@ class TestCNNClassifier(unittest.TestCase):
         print "Initializing classifier..."
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 8, 5, 5),
+                ('conv', 8, 3, 3),
+                ('conv', 8, 3, 3),
                 ('max-pool', 4),
                 ('fc', 256),
                 ('softmax', 10)
             ],
             optimizer=SGD(
-                batch_size=20,
+                batch_size=32,
                 init_rate=0.001,
-                nb_epochs=10,
+                nb_epochs=5,
                 learning_schedule='fixed',
                 update_rule=('momentum', 0.9),
                 verbose=True
             ),
+            l2_reg=10E-3,
             input_shape=[1,28,28],
             init='random',
+            verbose=True
         )
         print "Training..."
         classifier.train(self.trainsamples, self.trainlabels)
