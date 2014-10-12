@@ -8,7 +8,7 @@ from classifier import ClassifierMixin
 class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
-    def __init__(self, architecture, optimizer, init='random_alex', nb_channels=3):
+    def __init__(self, architecture, optimizer, input_shape, init='random_alex'):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
             initialization procedure.
@@ -18,11 +18,13 @@ class BaseCNNClassifier:
                 list of tuples which should be either:
                 - ('conv', nb_filters, nb_rows, nb_cols)
                 - ('max-pool', win_size)
-                - ('fc', nb_inputs, nb_neurons)
-                - ('softmax', nb_inputs, nb_outputs)
+                - ('fc', nb_outputs)
+                - ('softmax', nb_outputs)
             optimizer
                 optimization method to use for training the network. Should be
                 an instance of Optimizer.
+            input_shape
+                shape of input images, in [nb_channels, nb_rows, nb_cols] format.
             init
                 initialization procedure for the network. Can be:
                 - 'random_alex' for random initialization of network weights, with
@@ -34,7 +36,7 @@ class BaseCNNClassifier:
         self.optimizer = optimizer
         
         if init == 'random':
-            self.cnn = init_random(architecture, nb_channels)
+            self.cnn = init_random(architecture, input_shape)
         # Compile the CNN prediction functions.
         test_samples = T.tensor4('test_samples')
         self._predict_proba = theano.function(
@@ -69,10 +71,13 @@ class BaseCNNClassifier:
 class CNNClassifier(BaseCNNClassifier, ClassifierMixin):
     pass
 
-def init_random(architecture, nb_channels):
+def init_random(architecture, input_shape):
     """ Initialize a convolutional neural network at random given an architecture. 
-        All weights are initialized by sampling a normal distribution with mean 0 
-        and std 10^-2. Biases are initialized at 0.
+        Convolutional weights are initialized by sampling a normal distribution 
+        with mean 0 and variance 10^-2. Biases are initialized at 0. Fully connected
+        weights are initialized by sampling an uniform distribution within 
+        -/+ 4 * sqrt(6 / (nb_inputs + nb_outputs)) lower/higher bounds. Softmax
+        weights and biases are initialized at 0.
 
     Arguments:
         architecture
@@ -84,29 +89,46 @@ def init_random(architecture, nb_channels):
     nb_conv_mp = 0
     nb_fc = 0
     std = 0.001
-    input_dim = nb_channels
+    current_input_shape = input_shape
 
     # Initialize convolutional, max-pooling and FC layers.
     for layer_arch in architecture:
         if layer_arch[0] == 'conv':
+            input_dim = input_shape[0]
             nb_filters, nb_rows, nb_cols = layer_arch[1:]
-            filters = std * np.random.standard_normal([nb_filters, input_dim, nb_rows, nb_cols]).astype(theano.config.floatX)
+            filters = std * np.random.standard_normal(
+                [nb_filters, input_dim, nb_rows, nb_cols]
+            ).astype(theano.config.floatX)
             biases = np.zeros(
                 [nb_filters],
                 theano.config.floatX
             )
             layers.append(ConvLayer(filters, biases))
             nb_conv_mp += 1
-            # The input dimension of the next layer will be the number of filters 
+            # The input shape of the next layer will have the size of the input
+            # minus the size of the filter + 1, and dimension the number of filters
             # of this layer.
-            input_dim = nb_filters
+            current_input_shape = [
+                nb_filters,
+                current_input_shape[1] - nb_rows + 1,
+                current_input_shape[2] - nb_cols + 1
+            ]
         elif layer_arch[0] == 'max-pool':
             # Max pooling layers leave the input dimension unchanged.
             pooling_size = layer_arch[1]
             layers.append(MaxPoolLayer(pooling_size))
             nb_conv_mp += 1
+            # The new output will have the same dimension of features, but
+            # number of rows and cols divided by the pooling size.
+            current_input_shape = [
+                current_input_shape[0],
+                current_input_shape[1] // pooling_size,
+                current_input_shape[2] // pooling_size
+            ]
         elif layer_arch[0] == 'fc':
-            nb_inputs, nb_neurons = layer_arch[1:]
+            # The inputs will be a flattened array of whatever came before.
+            nb_inputs = int(np.prod(current_input_shape))
+            nb_neurons = layer_arch[1]
             w_bound = 4. * np.sqrt(6. / (nb_inputs + nb_neurons))
             weights =  np.random.uniform(
                 -w_bound, 
@@ -119,8 +141,11 @@ def init_random(architecture, nb_channels):
             )
             layers.append(FCLayer(weights, biases))
             nb_fc += 1
+            current_input_shape = [nb_neurons]
         elif layer_arch[0] == 'softmax':
-            nb_inputs, nb_outputs = layer_arch[1:]
+            # The inputs will be a flattened array of whatever came before.
+            nb_inputs = int(np.prod(current_input_shape))
+            nb_outputs = layer_arch[1]
             weights = np.zeros(
                 [nb_inputs, nb_outputs],
                 theano.config.floatX
@@ -130,13 +155,21 @@ def init_random(architecture, nb_channels):
                 theano.config.floatX
             )
             layers.append(SoftmaxLayer(weights, biases))
+            current_input_shape = [nb_outputs]
         else:
-            raise ValueError(repr(layer_arch) + " is not a valid layer architecture.")
+            raise ValueError(repr(layer_arch) + 
+                             " is not a valid layer architecture.")
 
     if len(layers) != nb_conv_mp + nb_fc + 1:
-        raise ValueError("The architecture should finish with exactly one Softmax layer.")
+        raise ValueError(
+            "The architecture should finish with exactly one Softmax layer."
+        )
         
-    return CNN(layers[0:nb_conv_mp], layers[nb_conv_mp:nb_conv_mp+nb_fc], layers[-1])
+    return CNN(
+        layers[0:nb_conv_mp], 
+        layers[nb_conv_mp:nb_conv_mp+nb_fc], 
+        layers[-1]
+    )
 
 class CNN:
     """ Convolutional neural network.
