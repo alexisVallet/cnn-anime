@@ -1,15 +1,14 @@
 import theano
 import theano.tensor as T
-import numpy
+import numpy as np
 
 class GD:
-    """ Implementation of fixed learning rate gradient descent.
+    """ Implementation of fixed learning rate full batch gradient descent.
     """
-    def __init__(self, learning_rate, nb_iter, nb_samples, verbose=False):
+    def __init__(self, learning_rate, nb_iter, verbose=False):
         self.learning_rate = learning_rate
         self.verbose = verbose
         self.nb_iter = nb_iter
-        self.nb_samples = nb_samples
 
     def optimize(self, samples, labels, cost_function, parameters, compile_mode=None):
         """ Optimize a symbolic cost function, given symbolic variables for
@@ -54,3 +53,121 @@ class GD:
             if self.verbose:
                 print "Epoch " + repr(t)
                 print "Cost: " + repr(cost_val)
+
+class SGD:
+    """ Implementation of stochastic gradient descent.
+    """
+    def __init__(self, batch_size, init_rate, nb_epochs, update_rule='fixed', 
+                 eps=10E-5, verbose=False):
+        """ Initialized the optimization method.
+        
+        Arguments:
+            batch_size
+                approximate number of samples for each mini-batch. The actual
+                number will vary slightly to divide the dataset cleanly.
+            init_rate
+                initial learning rate. Will be updated according to the
+                update rule.
+            nb_epochs
+                number of epochs, or number of iterations over the entire
+                training set, to run before stopping.
+            update_rule
+                rule to update the learning rate. Can be:
+                - 'fixed' for constant learning rate fixed to the initial rate.
+            eps
+                precision for the convergence criteria.
+            verbose
+                True for regular printed messages.
+        """
+        assert update_rule in ['fixed']
+        self.batch_size = batch_size
+        self.init_rate = init_rate
+        self.nb_epochs = nb_epochs
+        self.update_rule = update_rule
+        self.eps = eps
+        self.verbose = verbose
+
+    def optimize(self, samples, labels, cost_function, parameters, 
+                 compile_mode=None):
+        # Determine batches by picking the number of batch which,
+        # when used to divide the number of samples, best approximates
+        # the desired batch size.
+        flt_nb_samples = float(len(samples))
+        ideal_nb_batches = flt_nb_samples / self.batch_size
+        lower_nb_batches = np.floor(ideal_nb_batches)
+        upper_nb_batches = np.ceil(ideal_nb_batches)
+        lower_error = abs(flt_nb_samples / lower_nb_batches - self.batch_size)
+        upper_error = abs(flt_nb_samples / upper_nb_batches - self.batch_size)
+        nb_batches = (int(lower_nb_batches) if lower_error < upper_error 
+                      else int(upper_nb_batches))
+        # Split the dataset into that number of batches in roughly equal-sized
+        # batches.
+        splits = np.round(np.linspace(0, len(samples), num=nb_batches+1)).astype(np.int32)
+        
+        # Store mini-batches into a shared variable. Since theano shared variables
+        # must have constant storage space, we'll initialize to the shape of the
+        # largest batch.
+        largest_batch_size = 0
+        for i in range(nb_batches):
+            batch_size = splits[i+1] - splits[i]
+            largest_batch_size = max(batch_size, largest_batch_size)
+        batch = theano.shared(
+            np.empty(
+                [largest_batch_size] + samples.sample_shape,
+                theano.config.floatX
+            ),
+            name='batch'
+        )
+        # Similarly for the batch labels.
+        batch_labels = theano.shared(
+            np.empty(
+                [largest_batch_size],
+                np.int32
+            ),
+            name='batch_labels'
+        )
+        
+        # Compile the theano function to run a full SGD iteration.
+        cost = cost_function(batch, batch_labels)
+        updates = []
+        
+        for param in parameters:
+            if self.update_rule == 'fixed':
+                updates.append(
+                    (param, param - self.init_rate * T.grad(cost, param))
+                )
+
+        run_iteration = theano.function(
+            [],
+            [cost],
+            updates=updates,
+            mode=compile_mode
+        )
+
+        # Run the actual iterations, shuffling the dataset at each epoch.
+        for t in range(1, self.nb_epochs + 1):
+            permutation = np.random.permutation(len(samples))
+            samples.shuffle(permutation)
+            samples_iterator = iter(samples)
+            avg_cost = np.array([0], theano.config.floatX)
+
+            for i in range(nb_batches):
+                # Select the batch.
+                batch_size = splits[i+1] - splits[i]
+                batch_labels.set_value(labels[permutation[splits[i]:splits[i+1]]])
+                new_batch = np.empty(
+                    [batch_size] + samples.sample_shape,
+                    theano.config.floatX
+                )
+                
+                for j in range(batch_size):
+                    new_batch[j] = samples_iterator.next()
+                batch.set_value(new_batch)
+                
+                # Run the iteration.
+                cost_val = run_iteration()
+                
+                avg_cost += cost_val
+            if self.verbose:
+                print "Epoch " + repr(t)
+                print "Cost: " + repr(avg_cost / nb_batches)

@@ -8,7 +8,7 @@ from classifier import ClassifierMixin
 class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
-    def __init__(self, architecture, optimizer, init='random', nb_channels=3):
+    def __init__(self, architecture, optimizer, init='random_alex', nb_channels=3):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
             initialization procedure.
@@ -25,8 +25,10 @@ class BaseCNNClassifier:
                 an instance of Optimizer.
             init
                 initialization procedure for the network. Can be:
-                - 'random' for random initialization of network weights, with
-                  the method described by Alex Krizhevsky, 2012.
+                - 'random_alex' for random initialization of network weights, with
+                  the method described by Alex Krizhevsky, 2012, and used by most
+                  deep convnet architectures since: random gaussian with mean 0
+                  0.001 variance for weights, 0 for biases.
         """
         assert init in ['random']
         self.optimizer = optimizer
@@ -58,7 +60,7 @@ class BaseCNNClassifier:
             compile_mode=mode
         )
 
-    def predict_proba(self, images, labels):
+    def predict_proba(self, images):
         return self._predict_proba(images.to_array())
 
     def predict_label(self, images):
@@ -68,9 +70,9 @@ class CNNClassifier(BaseCNNClassifier, ClassifierMixin):
     pass
 
 def init_random(architecture, nb_channels):
-    """ Initialize a convolutional neural network at random given an architecture. All
-        weights are initialized by sampling a normal distribution with mean 0 and variance
-        10^-2. Biases are initialized at 0.
+    """ Initialize a convolutional neural network at random given an architecture. 
+        All weights are initialized by sampling a normal distribution with mean 0 
+        and std 10^-2. Biases are initialized at 0.
 
     Arguments:
         architecture
@@ -81,7 +83,7 @@ def init_random(architecture, nb_channels):
     layers = []
     nb_conv_mp = 0
     nb_fc = 0
-    std = 0.001**2
+    std = 0.001
     input_dim = nb_channels
 
     # Initialize convolutional, max-pooling and FC layers.
@@ -95,8 +97,8 @@ def init_random(architecture, nb_channels):
             )
             layers.append(ConvLayer(filters, biases))
             nb_conv_mp += 1
-            # The input dimension of the next layer will be the number of filters of this
-            # layer.
+            # The input dimension of the next layer will be the number of filters 
+            # of this layer.
             input_dim = nb_filters
         elif layer_arch[0] == 'max-pool':
             # Max pooling layers leave the input dimension unchanged.
@@ -104,10 +106,13 @@ def init_random(architecture, nb_channels):
             layers.append(MaxPoolLayer(pooling_size))
             nb_conv_mp += 1
         elif layer_arch[0] == 'fc':
-            # Fully connected layers, we assume that the number of inputs specified by the
-            # user makes sense - it defines the size of the input images.
             nb_inputs, nb_neurons = layer_arch[1:]
-            weights = std * np.random.standard_normal([nb_inputs, nb_neurons]).astype(theano.config.floatX)
+            w_bound = 4. * np.sqrt(6. / (nb_inputs + nb_neurons))
+            weights =  np.random.uniform(
+                -w_bound, 
+                w_bound, 
+                [nb_inputs, nb_neurons]
+            ).astype(theano.config.floatX)
             biases = np.zeros(
                 [nb_neurons],
                 theano.config.floatX
@@ -116,7 +121,10 @@ def init_random(architecture, nb_channels):
             nb_fc += 1
         elif layer_arch[0] == 'softmax':
             nb_inputs, nb_outputs = layer_arch[1:]
-            weights = std * np.random.standard_normal([nb_inputs, nb_outputs]).astype(theano.config.floatX)
+            weights = np.zeros(
+                [nb_inputs, nb_outputs],
+                theano.config.floatX
+            )
             biases = np.zeros(
                 [nb_outputs],
                 theano.config.floatX
@@ -304,7 +312,8 @@ class ConvLayer(Layer):
     """
     
     def __init__(self, init_filters, init_biases, fmaps_shape=None):
-        """ Initializes a convolutional layer with a set of initial filters and biases.
+        """ Initializes a convolutional layer with a set of initial filters and 
+            biases.
 
         Arguments:
             init_filters
@@ -329,16 +338,19 @@ class ConvLayer(Layer):
         out_fmaps = T.nnet.conv.conv2d(
             fmaps,
             self.filters,
+            border_mode='valid',
             filter_shape=self.filter_shape,
             image_shape=self.fmaps_shape
         )
         nb_filters = self.filter_shape[0]
         # Add biases and apply ReLU non-linearity.
-        return T.maximum(
+        relu_fmaps = T.maximum(
             0, 
             out_fmaps +  self.biases.reshape([1, nb_filters, 1, 1])
         )
+        return relu_fmaps
 
+            
     def parameters(self):
         return [self.filters, self.biases]
 

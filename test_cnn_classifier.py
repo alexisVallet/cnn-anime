@@ -6,7 +6,7 @@ import cv2
 
 from cnn_classifier import CNNClassifier
 from dataset import load_mnist
-from optimize import GD
+from optimize import GD, SGD
 
 class TestCNNClassifier(unittest.TestCase):
     @classmethod
@@ -23,23 +23,19 @@ class TestCNNClassifier(unittest.TestCase):
         )
 
     def test_cnn_classifier(self):
-        # Tests the CNN classifier with a simple LeNet-like
-        # architecture to classify digits from the MNIST dataset.
         print "Initializing classifier..."
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 6, 5, 5), # 28 by 28 to 24 by 24
-                ('max-pool', 2), # to 12 by 12
-                ('conv', 16, 5, 5), # to 8 by 8
-                ('max-pool', 2), # to 4 by 4
-                ('conv', 120, 4, 4), # to 1 by 1
-                ('fc', 120, 84), # Each 1 by 1 to a 84-neuron net
-                ('softmax', 84, 10) # 10 classes, one for each digit.
+                ('conv', 8, 5, 5),
+                ('max-pool', 4),
+                ('fc', 288, 256),
+                ('softmax', 256, 10)
             ],
-            optimizer=GD(
-                learning_rate=0.001,
-                nb_iter=100,
-                nb_samples=len(self.trainsamples),
+            optimizer=SGD(
+                batch_size=20,
+                init_rate=0.001,
+                nb_epochs=10,
+                update_rule='fixed',
                 verbose=True
             ),
             init='random',
