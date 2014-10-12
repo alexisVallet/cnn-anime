@@ -57,8 +57,8 @@ class GD:
 class SGD:
     """ Implementation of stochastic gradient descent.
     """
-    def __init__(self, batch_size, init_rate, nb_epochs, update_rule='fixed', 
-                 eps=10E-5, verbose=False):
+    def __init__(self, batch_size, init_rate, nb_epochs, learning_schedule='fixed',
+                 update_rule='simple', eps=10E-5, verbose=False):
         """ Initialized the optimization method.
         
         Arguments:
@@ -71,18 +71,24 @@ class SGD:
             nb_epochs
                 number of epochs, or number of iterations over the entire
                 training set, to run before stopping.
-            update_rule
+            learning_schedule
                 rule to update the learning rate. Can be:
                 - 'fixed' for constant learning rate fixed to the initial rate.
+            update_rule
+                rule to update the parameters. Can be:
+                - 'simple' for simply w(t) = w(t-1) - alpha * grad(t)
+                - ('momentum', mtm) for the momentum method:
+                  w(t) = w(t-1) - alpha * dw(t)
+                  dw(t) = mtm * dw(t-1) + grad(t)
             eps
                 precision for the convergence criteria.
             verbose
                 True for regular printed messages.
         """
-        assert update_rule in ['fixed']
         self.batch_size = batch_size
         self.init_rate = init_rate
         self.nb_epochs = nb_epochs
+        self.learning_schedule = learning_schedule
         self.update_rule = update_rule
         self.eps = eps
         self.verbose = verbose
@@ -126,16 +132,41 @@ class SGD:
             ),
             name='batch_labels'
         )
-        
+
         # Compile the theano function to run a full SGD iteration.
         cost = cost_function(batch, batch_labels)
         updates = []
         
-        for param in parameters:
-            if self.update_rule == 'fixed':
+        learning_rate = self.init_rate
+
+        # Update rule.
+        if self.update_rule == 'simple':
+            for param in parameters:
                 updates.append(
-                    (param, param - self.init_rate * T.grad(cost, param))
+                    (param, param - learning_rate * T.grad(cost, param))
                 )
+        elif self.update_rule[0] == 'momentum':
+            mtm = self.update_rule[1]
+            # Keep track of the update at t-1.
+            prev_updates = []
+            for param in parameters:
+                param_shape = param.get_value().shape
+                prev_updates.append(theano.shared(
+                    np.zeros(param_shape, theano.config.floatX)
+                ))
+            # And update the weights by taking into account a momentum
+            # from t-1.
+            for i in range(len(parameters)):
+                cur_update = (
+                    mtm * prev_updates[i] + learning_rate * 
+                    T.grad(cost, parameters[i])
+                )
+                updates += [
+                    (parameters[i], parameters[i] - cur_update),
+                    (prev_updates[i], cur_update)
+                ]                     
+        else:
+            raise ValueError("Invalid update rule!")
 
         run_iteration = theano.function(
             [],

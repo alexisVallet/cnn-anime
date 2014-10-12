@@ -28,18 +28,19 @@ class TestCNNClassifier(unittest.TestCase):
             architecture=[
                 ('conv', 8, 5, 5),
                 ('max-pool', 4),
-                ('fc', 288, 256),
-                ('softmax', 256, 10)
+                ('fc', 256),
+                ('softmax', 10)
             ],
             optimizer=SGD(
                 batch_size=20,
                 init_rate=0.001,
                 nb_epochs=10,
-                update_rule='fixed',
+                learning_schedule='fixed',
+                update_rule=('momentum', 0.9),
                 verbose=True
             ),
+            input_shape=[1,28,28],
             init='random',
-            nb_channels=1
         )
         print "Training..."
         classifier.train(self.trainsamples, self.trainlabels)
