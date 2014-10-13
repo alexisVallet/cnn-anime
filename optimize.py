@@ -2,63 +2,11 @@ import theano
 import theano.tensor as T
 import numpy as np
 
-class GD:
-    """ Implementation of fixed learning rate full batch gradient descent.
-    """
-    def __init__(self, learning_rate, nb_iter, verbose=False):
-        self.learning_rate = learning_rate
-        self.verbose = verbose
-        self.nb_iter = nb_iter
-
-    def optimize(self, samples, labels, cost_function, parameters, compile_mode=None):
-        """ Optimize a symbolic cost function, given symbolic variables for
-            parameters to optimize for.
-
-        Arguments:
-            samples
-                an arbitrary dataset.
-            labels
-                numpy vector of integer labels corresponding to the samples.
-            cost_function
-                python function taking as input two symbolic tensors (or constant numpy
-                arrays) for samples and labels respectively, and returns a symbolic theano
-                scalar which evaluates the cost.
-            parameters
-                shared theano variable for parameters to optimize the cost function for.
-                Assumed to have been initialized prior to the optimization.
-            compile_mode
-                optional theano compilation mode, for cost-function specific optimizations.
-        """
-        if self.verbose:
-            print "Compiling cost and gradient functions..."
-        # Store all the samples in a numpy array.
-        samples_array = samples.to_array()
-        cost = cost_function(samples_array, labels)
-        # Theano function to run a full GD iteration.
-        updates = []
-
-        for param in parameters:
-            updates.append(
-                (param, param - self.learning_rate * T.grad(cost, param))
-            )
-
-        run_iteration = theano.function(
-            [],
-            [cost],
-            updates=updates,
-            mode=compile_mode
-        )
-        for t in range(1, self.nb_iter + 1):
-            cost_val = run_iteration()
-            if self.verbose:
-                print "Epoch " + repr(t)
-                print "Cost: " + repr(cost_val)
-
 class SGD:
     """ Implementation of stochastic gradient descent.
     """
     def __init__(self, batch_size, init_rate, nb_epochs, learning_schedule='fixed',
-                 update_rule='simple', eps=10E-5, verbose=False):
+                 update_rule='simple', verbose=False):
         """ Initialized the optimization method.
         
         Arguments:
@@ -73,9 +21,10 @@ class SGD:
                 training set, to run before stopping.
             learning_schedule
                 rule to update the learning rate. Can be:
-                - 'fixed' for constant learning rate fixed to the initial rate.
-                - ('decaying', decay) for learning rate decaying by a decay
-                  factor for every epoch.
+                - 'constant' for constant learning rate fixed to the initial rate.
+                - ('decay', decay_factor, valid_samples, valid_labels) for 
+                  learning rate decaying when validation error does not decrease 
+                  after an epoch.
             update_rule
                 rule to update the parameters. Can be:
                 - 'simple' for simply w(t) = w(t-1) - alpha * grad(t)
@@ -84,8 +33,6 @@ class SGD:
                   dw(t) = mtm * dw(t-1) + grad(t)
                 - ('rprop', inc_rate, dec_rate) for the rprop method,
                   should be used with large mini-batches only.
-            eps
-                precision for the convergence criteria.
             verbose
                 True for regular printed messages.
         """
@@ -94,11 +41,9 @@ class SGD:
         self.nb_epochs = nb_epochs
         self.learning_schedule = learning_schedule
         self.update_rule = update_rule
-        self.eps = eps
         self.verbose = verbose
 
-    def optimize(self, samples, labels, cost_function, parameters, 
-                 compile_mode=None):
+    def optimize(self, model, samples, labels, compile_mode=None):
         # Determine batches by picking the number of batch which,
         # when used to divide the number of samples, best approximates
         # the desired batch size.
@@ -141,12 +86,14 @@ class SGD:
         )
 
         # Compile the theano function to run a full SGD iteration.
-        cost = cost_function(batch, batch_labels)
+        cost = model.cost_function(batch, batch_labels)
         updates = []
         
         learning_rate = theano.shared(
             np.float32(self.init_rate)
         )
+
+        parameters = model.parameters()
 
         # Update rule.
         if self.update_rule == 'simple':
@@ -183,6 +130,8 @@ class SGD:
             updates=updates,
             mode=compile_mode
         )
+        predict_label = None
+        prev_valid_err = None
 
         # Run the actual iterations, shuffling the dataset at each epoch.
         for t in range(1, self.nb_epochs + 1):
@@ -207,9 +156,49 @@ class SGD:
                 # Run the iteration.
                 cost_val = run_iteration()
                 avg_cost += cost_val
+            # Learning schedule.
+            if self.learning_schedule == 'constant':
+                pass
+            elif self.learning_schedule[0] == 'decay':
+                # Compute a validation error rate, decay the learning rate
+                # if it didn't decrease since last epoch.
+                decay, valid_samples, valid_labels = self.learning_schedule[1:]
+                # If the validation error rate function wasn't compiled yet,
+                # do it. We assume the validation set fits into VRAM for GPU
+                # implementations, which might be a tad unrealistic. In the
+                # future, it would be better to split it into mini-batches and
+                # accumulating the results to maximise the amount of memory to
+                # dedicate to model parameters - ideally, reusing the batch
+                # shared variable.
+                if predict_label == None:
+                    vs = T.tensor4('valid_samples')
+                    predict_label = theano.function(
+                        [vs],
+                        T.argmax(model.forward_pass(vs), axis=1),
+                        mode=compile_mode
+                    )
+                predicted_labels = predict_label(valid_samples.to_array())
+                current_err_rate = 0
+
+                for i in range(len(valid_samples)):
+                    if predicted_labels[i] != valid_labels[i]:
+                        current_err_rate += 1
+
+                current_err_rate = float(current_err_rate) / len(valid_samples)
+
+                if prev_valid_err != None and prev_valid_err <= current_err_rate:
+                    if self.verbose:
+                        print "Validation error not decreasing, decaying."
+                    learning_rate.set_value(
+                        np.float32(learning_rate.get_value() * decay)
+                    )
+                prev_valid_err = current_err_rate
+            else:
+                raise ValueError(repr(self.learning_schedule) 
+                                 + " is not a valid learning schedule!")
+            
             if self.verbose:
                 print "Epoch " + repr(t)
                 print "Cost: " + repr(avg_cost / nb_batches)
-                for i in range(len(parameters)):
-                    print ("Param " + repr(i) + " mean mag " 
-                           + repr(np.mean(np.abs(parameters[i].get_value()))))
+                if prev_valid_err != None:
+                    print "Validation error rate: " + repr(prev_valid_err)

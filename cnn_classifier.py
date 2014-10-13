@@ -68,10 +68,9 @@ class BaseCNNClassifier:
 
         # Run the optimizer on the CNN cost function.        
         self.optimizer.optimize(
+            cnn,
             images,
             labels,
-            cnn.cost_function,
-            cnn.parameters(),
             compile_mode=mode
         )
 
@@ -298,7 +297,9 @@ class BaseCNNClassifier:
                 weights = km.cluster_centers_.astype(theano.config.floatX).T
                 biases = np.zeros([nb_outputs], theano.config.floatX)
                 softmax_layer = SoftmaxLayer(weights, biases)
-                current_input_shape = softmax_layer.output_shape(current_input_shape)
+                current_input_shape = softmax_layer.output_shape(
+                    current_input_shape
+                )
                 # Run a forward pass to get the new batch.
                 batch = theano.function(
                     [],
