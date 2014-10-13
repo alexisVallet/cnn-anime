@@ -26,10 +26,11 @@ class TestCNNClassifier(unittest.TestCase):
         print "Initializing classifier..."
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 8, 3, 3),
-                ('conv', 8, 3, 3),
-                ('max-pool', 4),
-                ('fc', 256),
+                ('conv', 8, 5, 5),
+                ('max-pool', 2),
+                ('conv', 8, 5, 5),
+                ('max-pool', 2),
+                ('fc', 512),
                 ('softmax', 10)
             ],
             optimizer=SGD(

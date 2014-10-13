@@ -74,12 +74,16 @@ class SGD:
             learning_schedule
                 rule to update the learning rate. Can be:
                 - 'fixed' for constant learning rate fixed to the initial rate.
+                - ('decaying', decay) for learning rate decaying by a decay
+                  factor for every epoch.
             update_rule
                 rule to update the parameters. Can be:
                 - 'simple' for simply w(t) = w(t-1) - alpha * grad(t)
                 - ('momentum', mtm) for the momentum method:
                   w(t) = w(t-1) - alpha * dw(t)
                   dw(t) = mtm * dw(t-1) + grad(t)
+                - ('rprop', inc_rate, dec_rate) for the rprop method,
+                  should be used with large mini-batches only.
             eps
                 precision for the convergence criteria.
             verbose
@@ -108,7 +112,10 @@ class SGD:
                       else int(upper_nb_batches))
         # Split the dataset into that number of batches in roughly equal-sized
         # batches.
-        splits = np.round(np.linspace(0, len(samples), num=nb_batches+1)).astype(np.int32)
+        splits = np.round(np.linspace(
+            0, len(samples), 
+            num=nb_batches+1)
+        ).astype(np.int32)
         
         # Store mini-batches into a shared variable. Since theano shared variables
         # must have constant storage space, we'll initialize to the shape of the
@@ -137,7 +144,9 @@ class SGD:
         cost = cost_function(batch, batch_labels)
         updates = []
         
-        learning_rate = self.init_rate
+        learning_rate = theano.shared(
+            np.float32(self.init_rate)
+        )
 
         # Update rule.
         if self.update_rule == 'simple':
@@ -164,7 +173,7 @@ class SGD:
                 updates += [
                     (parameters[i], parameters[i] - cur_update),
                     (prev_updates[i], cur_update)
-                ]                     
+                ]
         else:
             raise ValueError("Invalid update rule!")
 
@@ -197,8 +206,10 @@ class SGD:
                 
                 # Run the iteration.
                 cost_val = run_iteration()
-                
                 avg_cost += cost_val
             if self.verbose:
                 print "Epoch " + repr(t)
                 print "Cost: " + repr(avg_cost / nb_batches)
+                for i in range(len(parameters)):
+                    print ("Param " + repr(i) + " mean mag " 
+                           + repr(np.mean(np.abs(parameters[i].get_value()))))

@@ -2,6 +2,7 @@ import theano
 import theano.tensor as T
 from theano.tensor.signal.downsample import max_pool_2d
 import numpy as np
+from sklearn.cluster import KMeans
 
 from classifier import ClassifierMixin
 
@@ -29,11 +30,11 @@ class BaseCNNClassifier:
             init
                 initialization procedure for the network. Can be:
                 - 'random' for random initialization of network weights.
-                - 'unsupervised' for greedy, layer-wise unsupervised pre-training.
+                - ('unsupervised', batch_size, nb_subwins) for greedy, layer-wise 
+                  unsupervised pre-training.
             l2_reg
                 parameter controlling the strength of l2 regularization.
         """
-        assert init in ['random', 'unsupervised']
         self.architecture = architecture
         self.optimizer = optimizer
         self.input_shape = input_shape
@@ -42,12 +43,15 @@ class BaseCNNClassifier:
         self.verbose = verbose
 
     def train(self, images, labels):
+        # Use theano's FFT convolutions.
+        mode = theano.compile.get_default_mode()
+        mode = mode.including('conv_fft_valid', 'conv_fft_full')
         # Initialize the CNN with the desired method.
         cnn = None
         if self.init == 'random':
             cnn = self.init_random()
-        elif self.init == 'unsupervised':
-            cnn = self.init_unsupervised(images)
+        elif self.init[0] == 'unsupervised':
+            cnn = self.init_unsupervised(images, self.init[1], self.init[2], mode)
         else:
             raise ValueError(repr(self.init) + 
                              " is not a valid initialization method.")
@@ -61,9 +65,6 @@ class BaseCNNClassifier:
             [test_samples],
             T.argmax(cnn.forward_pass(test_samples), axis=1)
         )
-        # Use theano's FFT convolutions.
-        mode = theano.compile.get_default_mode()
-        mode = mode.including('conv_fft_valid', 'conv_fft_full')
 
         # Run the optimizer on the CNN cost function.        
         self.optimizer.optimize(
@@ -99,7 +100,7 @@ class BaseCNNClassifier:
         layers = []
         nb_conv_mp = 0
         nb_fc = 0
-        std = 0.001
+        std = 0.01
         current_input_shape = self.input_shape
         
         # Initialize convolutional, max-pooling and FC layers.
@@ -110,55 +111,46 @@ class BaseCNNClassifier:
                 filters = std * np.random.standard_normal(
                     [nb_filters, input_dim, nb_rows, nb_cols]
                 ).astype(theano.config.floatX)
-                biases = np.zeros(
+                biases = np.ones(
                     [nb_filters],
                     theano.config.floatX
                 )
-                layers.append(ConvLayer(filters, biases))
+                layer = ConvLayer(filters, biases)
+                layers.append(layer)
                 nb_conv_mp += 1
-                # The input shape of the next layer will have the size of the input
-                # minus the size of the filter + 1, and dimension the number of filters
-                # of this layer.
-                current_input_shape = [
-                    nb_filters,
-                    current_input_shape[1] - nb_rows + 1,
-                    current_input_shape[2] - nb_cols + 1
-                ]
+                current_input_shape = layer.output_shape(current_input_shape)
                 if self.verbose:
                     print "Output of C" + repr(nb_conv_mp) + ": " + repr(current_input_shape)
             elif layer_arch[0] == 'max-pool':
                 # Max pooling layers leave the input dimension unchanged.
                 pooling_size = layer_arch[1]
-                layers.append(MaxPoolLayer(pooling_size))
+                layer = MaxPoolLayer(pooling_size)
+                layers.append(layer)
                 nb_conv_mp += 1
-                # The new output will have the same dimension of features, but
-                # number of rows and cols divided by the pooling size.
-                roffset = 1 if current_input_shape[1] % pooling_size != 0 else 0
-                coffset = 1 if current_input_shape[2] % pooling_size != 0 else 0
-                current_input_shape = [
-                    current_input_shape[0],
-                    current_input_shape[1] // pooling_size + roffset,
-                    current_input_shape[2] // pooling_size + coffset
-                ]
+                current_input_shape = layer.output_shape(current_input_shape)
                 if self.verbose:
                     print "Output of M" + repr(nb_conv_mp) + ": " + repr(current_input_shape)
             elif layer_arch[0] == 'fc':
                 # The inputs will be a flattened array of whatever came before.
                 nb_inputs = int(np.prod(current_input_shape))
                 nb_neurons = layer_arch[1]
-                w_bound = 4. * np.sqrt(6. / (nb_inputs + nb_neurons))
-                weights =  np.random.uniform(
-                    -w_bound, 
-                    w_bound, 
+                weights = std * np.random.standard_normal(
                     [nb_inputs, nb_neurons]
                 ).astype(theano.config.floatX)
-                biases = np.zeros(
+                # w_bound = 4. * np.sqrt(6. / (nb_inputs + nb_neurons))
+                # weights =  np.random.uniform(
+                #     -w_bound, 
+                #     w_bound, 
+                #     [nb_inputs, nb_neurons]
+                # ).astype(theano.config.floatX)
+                biases = np.ones(
                     [nb_neurons],
                     theano.config.floatX
                 )
-                layers.append(FCLayer(weights, biases))
+                layer = FCLayer(weights, biases)
+                layers.append(layer)
                 nb_fc += 1
-                current_input_shape = [nb_neurons]
+                current_input_shape = layer.output_shape(current_input_shape)
             elif layer_arch[0] == 'softmax':
                 # The inputs will be a flattened array of whatever came before.
                 nb_inputs = int(np.prod(current_input_shape))
@@ -171,8 +163,9 @@ class BaseCNNClassifier:
                     [nb_outputs],
                     theano.config.floatX
                 )
-                layers.append(SoftmaxLayer(weights, biases))
-                current_input_shape = [nb_outputs]
+                layer = SoftmaxLayer(weights, biases)
+                layers.append(layer)
+                current_input_shape = layer.output_shape(current_input_shape)
             else:
                 raise ValueError(repr(layer_arch) + 
                                  " is not a valid layer architecture.")
@@ -189,7 +182,7 @@ class BaseCNNClassifier:
             self.l2_reg
         )
 
-    def init_supervised(self, images, batch_size, nb_subwins):
+    def init_unsupervised(self, images, batch_size, nb_subwins, compile_mode):
         """ Initializes the weights of the neural network using greedy layer-wise
             pre training.
 
@@ -208,19 +201,113 @@ class BaseCNNClassifier:
             an initialized convolutional neural network.
         """
         # Get the random batch of training images.
-        batch = []
+        batch = np.empty(
+            [batch_size] + images.sample_shape,
+            theano.config.floatX
+        )
         images.shuffle(np.random.permutation(len(images)))
         images_it = iter(images)
 
         for i in range(batch_size):
-            batch.append(images_it.next())
+            batch[i] = images_it.next()
 
         # Then, layer by layer, initialize the convolutional filters using
         # K-means centers from randomly samples subwindows of the input. Then
         # run a forward pass of the input on the initialized layer to get the
         # input from the next one.
         current_input = batch
-        layers = []
+        current_input_shape = self.input_shape
+        conv_mp_layers = []
+        fc_layers = []
+        softmax_layer = None
+        
+        for layer_arch in self.architecture:
+            if layer_arch[0] == 'conv':
+                if self.verbose:
+                    print "Unsupervised pre-training for conv layer..."
+                nb_filters, nb_rows, nb_cols = layer_arch[1:]
+                nb_input_dim, inp_rows, inp_cols = current_input_shape
+                filter_shape = [nb_input_dim, nb_rows, nb_cols]
+                # Pick random subwindows out of the batch, run KMeans on them.
+                X = np.empty(
+                    [nb_subwins, np.prod(filter_shape)]
+                )
+                for i in range(nb_subwins):
+                    rand_sample = np.random.randint(batch_size)
+                    rand_row = np.random.randint(inp_rows - nb_rows - 1)
+                    rand_col = np.random.randint(inp_cols - nb_cols - 1)
+                    X[i] = batch[rand_sample][:, 
+                                              rand_row:rand_row+nb_rows,
+                                              rand_col:rand_col+nb_cols].flatten('C')
+                km = KMeans(nb_filters)
+                km.fit(X)
+                filters = km.cluster_centers_.reshape(
+                    [nb_filters] + filter_shape
+                ).astype(theano.config.floatX)
+                biases = np.zeros([nb_filters], theano.config.floatX)
+                layer = ConvLayer(filters, biases)
+                conv_mp_layers.append(layer)
+                current_input_shape = layer.output_shape(current_input_shape)
+                # Run a forward pass to get the new batch.
+                batch = theano.function(
+                    [],
+                    layer.forward_pass(batch),
+                    mode=compile_mode
+                )()
+            if layer_arch[0] == 'max-pool':
+                if self.verbose:
+                    print "Unsupervised pre-training for max-pooling layer..."
+                pooling_size = layer_arch[1]
+                layer = MaxPoolLayer(pooling_size)
+                conv_mp_layers.append(layer)
+                current_input_shape = layer.output_shape(current_input_shape)
+                # Run a forward pass to get the new batch.
+                batch = theano.function(
+                    [],
+                    layer.forward_pass(batch),
+                    mode=compile_mode
+                )()
+            if layer_arch[0] == 'fc':
+                if self.verbose:
+                    print "Unsupervised pre-training for FC layer..."
+                # For FC layers, run KMeans on the whole batch, and retrieve
+                # as many centers as output neurons
+                nb_outputs = layer_arch[1]
+                nb_inputs = np.prod(current_input_shape)
+                km = KMeans(nb_outputs)
+                km.fit(batch.reshape([batch_size, nb_inputs]))
+                weights = km.cluster_centers_.astype(theano.config.floatX).T
+                biases = np.zeros([nb_outputs], theano.config.floatX)
+                layer = FCLayer(weights, biases)
+                fc_layers.append(layer)
+                current_input_shape = layer.output_shape(current_input_shape)
+                # Run a forward pass to get the new batch.
+                batch = theano.function(
+                    [],
+                    layer.forward_pass(batch.reshape([batch_size, nb_inputs])),
+                    mode=compile_mode
+                )()
+            if layer_arch[0] == 'softmax':
+                if self.verbose:
+                    print "Unsupervised pre-training for softmax layer..."
+                # Same as FC layer.
+                nb_outputs = layer_arch[1]
+                nb_inputs = np.prod(current_input_shape)
+                km = KMeans(nb_outputs)
+                km.fit(batch.reshape([batch_size, nb_inputs]))
+                weights = km.cluster_centers_.astype(theano.config.floatX).T
+                biases = np.zeros([nb_outputs], theano.config.floatX)
+                softmax_layer = SoftmaxLayer(weights, biases)
+                current_input_shape = softmax_layer.output_shape(current_input_shape)
+                # Run a forward pass to get the new batch.
+                batch = theano.function(
+                    [],
+                    softmax_layer.forward_pass(
+                        batch.reshape([batch_size, nb_inputs])
+                    ),
+                    mode=compile_mode
+                )()
+        return CNN(conv_mp_layers, fc_layers, softmax_layer, self.l2_reg)
 
 class CNNClassifier(BaseCNNClassifier, ClassifierMixin):
     pass
@@ -384,7 +471,7 @@ class SoftmaxLayer(Layer):
         return [self.nb_outputs]
     
 class FCLayer(Layer):
-    """ Fully connected layer with sigmoid non-linearity.
+    """ Fully connected layer with ReLU non-linearity.
     """
     
     def __init__(self, init_weights, init_biases):
@@ -405,7 +492,7 @@ class FCLayer(Layer):
         self.biases = theano.shared(init_biases)
 
     def forward_pass(self, input_matrix):
-        return T.nnet.sigmoid(T.dot(input_matrix, self.weights) + self.biases)
+        return T.maximum(T.dot(input_matrix, self.weights) + self.biases, 0)
 
     def parameters(self):
         return [self.weights, self.biases]
@@ -417,7 +504,7 @@ class ConvLayer(Layer):
     """ Convolutional layer with ReLU non-linearity.
     """
     
-    def __init__(self, init_filters, init_biases, fmaps_shape=None):
+    def __init__(self, init_filters, init_biases):
         """ Initializes a convolutional layer with a set of initial filters and 
             biases.
 
@@ -436,8 +523,7 @@ class ConvLayer(Layer):
         # Store the initial filters in a shared variable.
         self.filters = theano.shared(init_filters)
         self.biases = theano.shared(init_biases)
-        self.filter_shape = init_filters.shape
-        self.fmaps_shape = fmaps_shape
+        self.filters_shape = init_filters.shape
         
     def forward_pass(self, fmaps):
         # Computes the raw convolution output.
@@ -446,7 +532,7 @@ class ConvLayer(Layer):
             self.filters,
             border_mode='valid'
         )
-        nb_filters = self.filter_shape[0]
+        nb_filters = self.filters_shape[0]
         # Add biases and apply ReLU non-linearity.
         relu_fmaps = T.maximum(
             0, 
@@ -457,6 +543,13 @@ class ConvLayer(Layer):
             
     def parameters(self):
         return [self.filters, self.biases]
+
+    def output_shape(self, input_shape):
+        return [
+            self.filters_shape[0],
+            input_shape[1] - self.filters_shape[2] + 1,
+            input_shape[2] - self.filters_shape[3] + 1
+        ]
 
 class MaxPoolLayer(Layer):
     """ Non-overlapping max pooling layer.
@@ -475,3 +568,13 @@ class MaxPoolLayer(Layer):
 
     def parameters(self):
         return []
+
+    def output_shape(self, input_shape):
+        roffset = 0 if input_shape[1] % self.pooling_size == 0 else 1
+        coffset = 0 if input_shape[2] % self.pooling_size == 0 else 1
+
+        return [
+            input_shape[0],
+            input_shape[1] // self.pooling_size + roffset,
+            input_shape[2] // self.pooling_size + coffset
+        ]
