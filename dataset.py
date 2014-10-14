@@ -122,3 +122,42 @@ def load_mnist(img_fname, lbl_fname):
         labels[i] = lbl[i]
 
     return ListDataset(images), labels
+
+class BaseMeanSubtraction(Dataset):
+    """ Dataset which subtracts the mean pixel value of an image dataset.
+    """
+    def __init__(self, dataset):
+        assert len(dataset.sample_shape) == 3
+        self.dataset = dataset
+        self.sample_shape = dataset.sample_shape
+
+    def __iter__(self):
+        # First accumulate the mean pixel value.
+        mean_pixel = np.zeros(
+            [self.dataset.sample_shape[0], 1, 1],
+            np.float64
+        )
+        nb_samples = len(self.dataset)
+        new_shape = ([self.dataset.sample_shape[0], 
+                      np.prod(self.dataset.sample_shape[1:])])
+        
+        for image in self.dataset:
+            mean_pixel += np.mean(
+                image.reshape(new_shape),
+                axis=1,
+                keepdims=True
+            ).astype(np.float64) / nb_samples
+        
+        mean_pixel = mean_pixel.astype(theano.config.floatX)
+        # Then subtract it from each image.
+        for image in self.dataset:
+            yield image - mean_pixel
+
+    def __len__(self):
+        return len(self.dataset)
+
+    def shuffle(self, permutation):
+        self.dataset.shuffle(permutation)
+
+class MeanSubtraction(BaseMeanSubtraction, DatasetMixin):
+    pass
