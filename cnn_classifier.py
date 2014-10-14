@@ -10,7 +10,7 @@ class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
     def __init__(self, architecture, optimizer, input_shape, init='random',
-                 l2_reg=0, verbose=False):
+                 l2_reg=0, preprocessing=[], verbose=False):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
             initialization procedure.
@@ -30,10 +30,10 @@ class BaseCNNClassifier:
             init
                 initialization procedure for the network. Can be:
                 - 'random' for random initialization of network weights.
-                - ('unsupervised', batch_size, nb_subwins) for greedy, layer-wise 
-                  unsupervised pre-training.
             l2_reg
                 parameter controlling the strength of l2 regularization.
+            verbose
+                verbosity.
         """
         self.architecture = architecture
         self.optimizer = optimizer
@@ -50,8 +50,6 @@ class BaseCNNClassifier:
         cnn = None
         if self.init == 'random':
             cnn = self.init_random()
-        elif self.init[0] == 'unsupervised':
-            cnn = self.init_unsupervised(images, self.init[1], self.init[2], mode)
         else:
             raise ValueError(repr(self.init) + 
                              " is not a valid initialization method.")
@@ -180,135 +178,6 @@ class BaseCNNClassifier:
             layers[-1],
             self.l2_reg
         )
-
-    def init_unsupervised(self, images, batch_size, nb_subwins, compile_mode):
-        """ Initializes the weights of the neural network using greedy layer-wise
-            pre training.
-
-        Arguments:
-            images
-               training data to use for initialization.
-            batch_size
-               number of random training images to use for the procedure. Should
-               be big enough to be representative of the whole dataset, but small
-               enough to fit in memory.
-            nb_subwins
-               number of random subwindows to sample from the training images
-               to use for the procedure.
-
-        Returns:
-            an initialized convolutional neural network.
-        """
-        # Get the random batch of training images.
-        batch = np.empty(
-            [batch_size] + images.sample_shape,
-            theano.config.floatX
-        )
-        images.shuffle(np.random.permutation(len(images)))
-        images_it = iter(images)
-
-        for i in range(batch_size):
-            batch[i] = images_it.next()
-
-        # Then, layer by layer, initialize the convolutional filters using
-        # K-means centers from randomly samples subwindows of the input. Then
-        # run a forward pass of the input on the initialized layer to get the
-        # input from the next one.
-        current_input = batch
-        current_input_shape = self.input_shape
-        conv_mp_layers = []
-        fc_layers = []
-        softmax_layer = None
-        
-        for layer_arch in self.architecture:
-            if layer_arch[0] == 'conv':
-                if self.verbose:
-                    print "Unsupervised pre-training for conv layer..."
-                nb_filters, nb_rows, nb_cols = layer_arch[1:]
-                nb_input_dim, inp_rows, inp_cols = current_input_shape
-                filter_shape = [nb_input_dim, nb_rows, nb_cols]
-                # Pick random subwindows out of the batch, run KMeans on them.
-                X = np.empty(
-                    [nb_subwins, np.prod(filter_shape)]
-                )
-                for i in range(nb_subwins):
-                    rand_sample = np.random.randint(batch_size)
-                    rand_row = np.random.randint(inp_rows - nb_rows - 1)
-                    rand_col = np.random.randint(inp_cols - nb_cols - 1)
-                    X[i] = batch[rand_sample][:, 
-                                              rand_row:rand_row+nb_rows,
-                                              rand_col:rand_col+nb_cols].flatten('C')
-                km = KMeans(nb_filters)
-                km.fit(X)
-                filters = km.cluster_centers_.reshape(
-                    [nb_filters] + filter_shape
-                ).astype(theano.config.floatX)
-                biases = np.zeros([nb_filters], theano.config.floatX)
-                layer = ConvLayer(filters, biases)
-                conv_mp_layers.append(layer)
-                current_input_shape = layer.output_shape(current_input_shape)
-                # Run a forward pass to get the new batch.
-                batch = theano.function(
-                    [],
-                    layer.forward_pass(batch),
-                    mode=compile_mode
-                )()
-            if layer_arch[0] == 'max-pool':
-                if self.verbose:
-                    print "Unsupervised pre-training for max-pooling layer..."
-                pooling_size = layer_arch[1]
-                layer = MaxPoolLayer(pooling_size)
-                conv_mp_layers.append(layer)
-                current_input_shape = layer.output_shape(current_input_shape)
-                # Run a forward pass to get the new batch.
-                batch = theano.function(
-                    [],
-                    layer.forward_pass(batch),
-                    mode=compile_mode
-                )()
-            if layer_arch[0] == 'fc':
-                if self.verbose:
-                    print "Unsupervised pre-training for FC layer..."
-                # For FC layers, run KMeans on the whole batch, and retrieve
-                # as many centers as output neurons
-                nb_outputs = layer_arch[1]
-                nb_inputs = np.prod(current_input_shape)
-                km = KMeans(nb_outputs)
-                km.fit(batch.reshape([batch_size, nb_inputs]))
-                weights = km.cluster_centers_.astype(theano.config.floatX).T
-                biases = np.zeros([nb_outputs], theano.config.floatX)
-                layer = FCLayer(weights, biases)
-                fc_layers.append(layer)
-                current_input_shape = layer.output_shape(current_input_shape)
-                # Run a forward pass to get the new batch.
-                batch = theano.function(
-                    [],
-                    layer.forward_pass(batch.reshape([batch_size, nb_inputs])),
-                    mode=compile_mode
-                )()
-            if layer_arch[0] == 'softmax':
-                if self.verbose:
-                    print "Unsupervised pre-training for softmax layer..."
-                # Same as FC layer.
-                nb_outputs = layer_arch[1]
-                nb_inputs = np.prod(current_input_shape)
-                km = KMeans(nb_outputs)
-                km.fit(batch.reshape([batch_size, nb_inputs]))
-                weights = km.cluster_centers_.astype(theano.config.floatX).T
-                biases = np.zeros([nb_outputs], theano.config.floatX)
-                softmax_layer = SoftmaxLayer(weights, biases)
-                current_input_shape = softmax_layer.output_shape(
-                    current_input_shape
-                )
-                # Run a forward pass to get the new batch.
-                batch = theano.function(
-                    [],
-                    softmax_layer.forward_pass(
-                        batch.reshape([batch_size, nb_inputs])
-                    ),
-                    mode=compile_mode
-                )()
-        return CNN(conv_mp_layers, fc_layers, softmax_layer, self.l2_reg)
 
 class CNNClassifier(BaseCNNClassifier, ClassifierMixin):
     pass

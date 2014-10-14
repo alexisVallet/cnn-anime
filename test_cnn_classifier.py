@@ -5,7 +5,7 @@ import numpy as np
 import cv2
 
 from cnn_classifier import CNNClassifier
-from dataset import load_mnist, ListDataset
+from dataset import load_mnist, ListDataset, MeanSubtraction
 from optimize import SGD
 
 class TestCNNClassifier(unittest.TestCase):
@@ -42,6 +42,12 @@ class TestCNNClassifier(unittest.TestCase):
         )
 
     def test_cnn_classifier(self):
+        # Preprocessing (actually no computation is done here, everything will
+        # be done on the fly).
+        pp_trainsamples = MeanSubtraction(self.trainsamples)
+        pp_validsamples = MeanSubtraction(self.validsamples)
+        pp_testsamples = MeanSubtraction(self.testsamples)
+
         print "Initializing classifier..."
         classifier = CNNClassifier(
             architecture=[
@@ -57,7 +63,7 @@ class TestCNNClassifier(unittest.TestCase):
                 learning_schedule=(
                     'decay', 
                     0.1, 
-                    self.validsamples,
+                    pp_validsamples,
                     self.validlabels
                 ),
                 update_rule=('momentum', 0.9),
@@ -66,12 +72,13 @@ class TestCNNClassifier(unittest.TestCase):
             l2_reg=10E-3,
             input_shape=[1,28,28],
             init='random',
+            preprocessing=[MeanSubtraction],
             verbose=True
         )
         print "Training..."
-        classifier.train(self.trainsamples, self.trainlabels)
+        classifier.train(pp_trainsamples, self.trainlabels)
         print "Predicting..."
-        print classifier.top_accuracy(self.testsamples, self.testlabels)
+        print classifier.top_accuracy(pp_testsamples, self.testlabels)
 
 if __name__ == "__main__":
     unittest.main()
