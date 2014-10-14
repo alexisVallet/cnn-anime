@@ -24,8 +24,8 @@ class TestCNNClassifier(unittest.TestCase):
         traindata.shuffle(perm)
         validsamples = []
         trainsamples = []
-        validlabels = np.empty([validation_size], np.int32)
-        trainlabels = np.empty([len(traindata) - validation_size], np.int32)
+        validlabels = []
+        trainlabels = []
         i = 0
         t_i = 0
 
@@ -33,11 +33,10 @@ class TestCNNClassifier(unittest.TestCase):
             sample, data = sample_data
             if i < validation_size:
                 validsamples.append(sample)
-                validlabels[i] = data['label']
+                validlabels.append(data['label'])
             else:
                 trainsamples.append(sample)
-                trainlabels[t_i] = data['label']
-                t_i += 1
+                trainlabels.append(data['label'])
             i += 1
         cls.traindata = ListDataset(trainsamples, trainlabels)
         cls.validdata = ListDataset(validsamples, validlabels)

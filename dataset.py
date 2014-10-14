@@ -3,6 +3,32 @@ import theano
 import numpy as np
 import os, struct
 from array import array
+import cPickle as pickle
+
+def load_pixiv_1M(images_folder, set_pkl):
+    """ Loads a dataset in the pixiv-1M format as a LazyIO dataset with multi-labels.
+
+    Arguments:
+        images_folder
+            folder where all the images are actually contained.
+        set_pkl
+            pickle file specifying the actual set (e.g. test, training, validation).
+    Returns:
+        A LazyIO dataset of images with multilabels. As the dataset is typically much
+        too large to fit in memory, the images are not actually loaded here and everything is
+        done on the fly.
+    """
+    fname_to_labels = None
+    with open(set_pkl, 'rb') as dataset_file:
+        fname_to_label = pickle.load(dataset_file)
+    filenames = []
+    labels = []
+
+    for fname in fname_to_labels:
+        filenames.append(fname)
+        labels.append(frozenset(fname_to_labels[fname]))
+    
+    return LazyIO(images_folder, filenames, labels)
 
 def load_mnist(img_fname, lbl_fname):
     """ Load the MNIST dataset in a list dataset from a pickled file.

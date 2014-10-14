@@ -2,11 +2,13 @@ import theano
 import theano.tensor as T
 import numpy as np
 
+from metrics import multi_label_sample_accuracy
+
 class SGD:
     """ Implementation of stochastic gradient descent.
     """
     def __init__(self, batch_size, init_rate, nb_epochs, learning_schedule='fixed',
-                 update_rule='simple', verbose=False):
+                 update_rule='simple', accuracy_measure='sample', verbose=False):
         """ Initialized the optimization method.
         
         Arguments:
@@ -33,6 +35,10 @@ class SGD:
                   dw(t) = mtm * dw(t-1) + grad(t)
                 - ('rprop', inc_rate, dec_rate) for the rprop method,
                   should be used with large mini-batches only.
+            accuracy_measure
+                measure of accuracy to use on the validation set:
+                - 'sample' for the regular, number of samples gotten right
+                  measure.
             verbose
                 True for regular printed messages.
         """
@@ -41,6 +47,7 @@ class SGD:
         self.nb_epochs = nb_epochs
         self.learning_schedule = learning_schedule
         self.update_rule = update_rule
+        self.accuracy_measure = accuracy_measure
         self.verbose = verbose
 
     def optimize(self, model, samples, valid_data, compile_mode=None):
@@ -131,7 +138,7 @@ class SGD:
             mode=compile_mode
         )
         predict_label = None
-        prev_valid_err = None
+        prev_acc = None
 
         # Run the actual iterations, shuffling the dataset at each epoch.
         for t in range(1, self.nb_epochs + 1):
@@ -185,29 +192,29 @@ class SGD:
                     [len(valid_data)] + valid_data.sample_shape,
                     theano.config.floatX
                 )
-                valid_labels = np.empty([len(valid_data)], np.int32)
+                valid_labels = []
                 i = 0
                 for sample_label in valid_data:
                     sample, data = sample_label
                     valid_samples[i] = sample
-                    valid_labels[i] = data['label']
+                    # A bit of ugly hacking to deal with both single label datasets and
+                    # multi-label datasets.
+                    valid_labels.append(data['label'] if isinstance(data['label'], frozenset)
+                                        else frozenset([data['label']]))
                     i += 1
-                predicted_labels = predict_label(valid_samples)
-                current_err_rate = 0
+                predicted_labels = map(
+                    lambda i: set([i]),
+                    list(predict_label(valid_samples))
+                )
+                current_acc = multi_label_sample_accuracy(valid_labels, predicted_labels)
 
-                for i in range(len(valid_data)):
-                    if predicted_labels[i] != valid_labels[i]:
-                        current_err_rate += 1
-
-                current_err_rate = float(current_err_rate) / len(valid_samples)
-
-                if prev_valid_err != None and prev_valid_err <= current_err_rate:
+                if current_acc != None and prev_acc >= current_acc:
                     if self.verbose:
-                        print "Validation error not decreasing, decaying."
+                        print "Validation accuracy not increasing, decaying."
                     learning_rate.set_value(
                         np.float32(learning_rate.get_value() * decay)
                     )
-                prev_valid_err = current_err_rate
+                prev_acc = current_acc
             else:
                 raise ValueError(repr(self.learning_schedule) 
                                  + " is not a valid learning schedule!")
@@ -215,5 +222,5 @@ class SGD:
             if self.verbose:
                 print "Epoch " + repr(t)
                 print "Cost: " + repr(avg_cost / nb_batches)
-                if prev_valid_err != None:
-                    print "Validation error rate: " + repr(prev_valid_err)
+                if prev_acc != None:
+                    print "Validation accuracy: " + repr(prev_acc)
