@@ -103,3 +103,4 @@ class BaseMeanSubtraction(DatasetTransformer):
     
 class MeanSubtraction(BaseMeanSubtraction, DatasetTransformerMixin):
     pass
+
