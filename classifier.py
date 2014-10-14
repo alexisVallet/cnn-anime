@@ -114,7 +114,7 @@ class ClassifierMixin:
     def train_validation_named(self, samples, labels, valid_size=0.2):
         self.train_validation(samples, self.name_to_int(labels), valid_size)
 
-    def top_accuracy(self, samples, labels):
+    def top_accuracy(self, samples):
         """ Computes top-1 to to top-k accuracy of the classifier on test data,
             assuming it already has been trained, where k is the total number
             of classes.
@@ -124,10 +124,13 @@ class ClassifierMixin:
         nb_classes = probas.shape[1]
         nb_samples = len(samples)
         nb_correct_top = np.zeros([nb_classes], np.int32)
+        sample_it = iter(samples)
 
         for i in range(nb_samples):
+            sample, data = sample_it.next()
+            
             for j in range(nb_classes):
-                if labels[i] == sorted_classes[i,j]:
+                if data['label'] == sorted_classes[i,j]:
                     nb_correct_top[j:] += 1
                     break
 

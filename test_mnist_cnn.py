@@ -5,7 +5,8 @@ import numpy as np
 import cv2
 
 from cnn_classifier import CNNClassifier
-from dataset import load_mnist, ListDataset, MeanSubtraction
+from dataset import load_mnist, ListDataset
+from preprocessing import MeanSubtraction
 from optimize import SGD
 
 class TestCNNClassifier(unittest.TestCase):
@@ -13,41 +14,40 @@ class TestCNNClassifier(unittest.TestCase):
     def setUpClass(cls):
         print "Loading data..."
         # Loads the MNIST dataset.
-        trainsamples, trainlabels = load_mnist(
+        traindata = load_mnist(
             'data/mnist/train-images.idx3-ubyte',
             'data/mnist/train-labels.idx1-ubyte'
         )
         # Choose a validation dataset.
         validation_size = 5000
-        perm = np.random.permutation(len(trainsamples))
-        trainsamples.shuffle(perm)
+        perm = np.random.permutation(len(traindata))
+        traindata.shuffle(perm)
         validsamples = []
-        trainsamples_ = []
-        cls.validlabels = trainlabels[perm[0:validation_size]]
-        cls.trainlabels = trainlabels[perm[validation_size:]]
+        trainsamples = []
+        validlabels = np.empty([validation_size], np.int32)
+        trainlabels = np.empty([len(traindata) - validation_size], np.int32)
         i = 0
+        t_i = 0
 
-        for sample in trainsamples:
+        for sample_data in traindata:
+            sample, data = sample_data
             if i < validation_size:
                 validsamples.append(sample)
+                validlabels[i] = data['label']
             else:
-                trainsamples_.append(sample)
+                trainsamples.append(sample)
+                trainlabels[t_i] = data['label']
+                t_i += 1
             i += 1
-        cls.trainsamples = ListDataset(trainsamples_)
-        cls.validsamples = ListDataset(validsamples)
+        cls.traindata = ListDataset(trainsamples, trainlabels)
+        cls.validdata = ListDataset(validsamples, validlabels)
         
-        cls.testsamples, cls.testlabels = load_mnist(
+        cls.testdata = load_mnist(
             'data/mnist/t10k-images.idx3-ubyte',
             'data/mnist/t10k-labels.idx1-ubyte'
         )
 
     def test_cnn_classifier(self):
-        # Preprocessing (actually no computation is done here, everything will
-        # be done on the fly).
-        pp_trainsamples = MeanSubtraction(self.trainsamples)
-        pp_validsamples = MeanSubtraction(self.validsamples)
-        pp_testsamples = MeanSubtraction(self.testsamples)
-
         print "Initializing classifier..."
         classifier = CNNClassifier(
             architecture=[
@@ -60,25 +60,20 @@ class TestCNNClassifier(unittest.TestCase):
                 batch_size=32,
                 init_rate=0.001,
                 nb_epochs=10,
-                learning_schedule=(
-                    'decay', 
-                    0.1, 
-                    pp_validsamples,
-                    self.validlabels
-                ),
+                learning_schedule=('decay', 0.1),
                 update_rule=('momentum', 0.9),
                 verbose=True
             ),
             l2_reg=10E-3,
             input_shape=[1,28,28],
             init='random',
-            preprocessing=[MeanSubtraction],
+            preprocessing=[MeanSubtraction()],
             verbose=True
         )
         print "Training..."
-        classifier.train(pp_trainsamples, self.trainlabels)
+        classifier.train(self.traindata, self.validdata)
         print "Predicting..."
-        print classifier.top_accuracy(pp_testsamples, self.testlabels)
+        print classifier.top_accuracy(self.testdata)
 
 if __name__ == "__main__":
     unittest.main()

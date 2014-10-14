@@ -32,6 +32,8 @@ class BaseCNNClassifier:
                 - 'random' for random initialization of network weights.
             l2_reg
                 parameter controlling the strength of l2 regularization.
+            preprocessing
+                pipeline of dataset transformers for training and testing preprocessing.
             verbose
                 verbosity.
         """
@@ -40,9 +42,10 @@ class BaseCNNClassifier:
         self.input_shape = input_shape
         self.init = init
         self.l2_reg = l2_reg
+        self.preprocessing = preprocessing
         self.verbose = verbose
 
-    def train(self, images, labels):
+    def train(self, dataset, valid_data):
         # Use theano's FFT convolutions.
         mode = theano.compile.get_default_mode()
         mode = mode.including('conv_fft_valid', 'conv_fft_full')
@@ -64,19 +67,39 @@ class BaseCNNClassifier:
             T.argmax(cnn.forward_pass(test_samples), axis=1)
         )
 
+        # Run the preprocessing pipeline.
+        pp_dataset = dataset
+        pp_valid_data = valid_data
+
+        for preproc in self.preprocessing:
+            pp_dataset = preproc.train_data_transform(pp_dataset)
+            pp_valid_data = preproc.test_data_transform(pp_valid_data)
+        
         # Run the optimizer on the CNN cost function.        
         self.optimizer.optimize(
             cnn,
-            images,
-            labels,
+            pp_dataset,
+            pp_valid_data,
             compile_mode=mode
         )
 
     def predict_proba(self, images):
-        return self._predict_proba(images.to_array())
+        # Run the preprocessing pipeline.
+        pp_images = images
+
+        for preproc in self.preprocessing:
+            pp_images = preproc.test_data_transform(pp_images)
+        
+        return self._predict_proba(pp_images.to_array())
 
     def predict_label(self, images):
-        return self._predict_proba(images.to_array())
+        # Run the preprocessing pipeline.
+        pp_images = images
+
+        for preproc in self.preprocessing:
+            pp_images = preproc.test_data_transform(pp_images)
+        
+        return self._predict_proba(pp_images.to_array())
 
     def init_random(self):
         """ Initializes a convolutional neural network at random given an 

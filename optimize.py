@@ -22,7 +22,7 @@ class SGD:
             learning_schedule
                 rule to update the learning rate. Can be:
                 - 'constant' for constant learning rate fixed to the initial rate.
-                - ('decay', decay_factor, valid_samples, valid_labels) for 
+                - ('decay', decay_factor) for 
                   learning rate decaying when validation error does not decrease 
                   after an epoch.
             update_rule
@@ -43,7 +43,7 @@ class SGD:
         self.update_rule = update_rule
         self.verbose = verbose
 
-    def optimize(self, model, samples, labels, compile_mode=None):
+    def optimize(self, model, samples, valid_data, compile_mode=None):
         # Determine batches by picking the number of batch which,
         # when used to divide the number of samples, best approximates
         # the desired batch size.
@@ -143,15 +143,18 @@ class SGD:
             for i in range(nb_batches):
                 # Select the batch.
                 batch_size = splits[i+1] - splits[i]
-                batch_labels.set_value(labels[permutation[splits[i]:splits[i+1]]])
                 new_batch = np.empty(
                     [batch_size] + samples.sample_shape,
                     theano.config.floatX
                 )
+                new_labels = np.empty([batch_size], np.int32)
                 
                 for j in range(batch_size):
-                    new_batch[j] = samples_iterator.next()
+                    sample, data = samples_iterator.next()
+                    new_batch[j] = sample
+                    new_labels[j] = data['label']
                 batch.set_value(new_batch)
+                batch_labels.set_value(new_labels)
                 
                 # Run the iteration.
                 cost_val = run_iteration()
@@ -162,7 +165,7 @@ class SGD:
             elif self.learning_schedule[0] == 'decay':
                 # Compute a validation error rate, decay the learning rate
                 # if it didn't decrease since last epoch.
-                decay, valid_samples, valid_labels = self.learning_schedule[1:]
+                decay = self.learning_schedule[1]
                 # If the validation error rate function wasn't compiled yet,
                 # do it. We assume the validation set fits into VRAM for GPU
                 # implementations, which might be a tad unrealistic. In the
@@ -177,10 +180,22 @@ class SGD:
                         T.argmax(model.forward_pass(vs), axis=1),
                         mode=compile_mode
                     )
-                predicted_labels = predict_label(valid_samples.to_array())
+
+                valid_samples = np.empty(
+                    [len(valid_data)] + valid_data.sample_shape,
+                    theano.config.floatX
+                )
+                valid_labels = np.empty([len(valid_data)], np.int32)
+                i = 0
+                for sample_label in valid_data:
+                    sample, data = sample_label
+                    valid_samples[i] = sample
+                    valid_labels[i] = data['label']
+                    i += 1
+                predicted_labels = predict_label(valid_samples)
                 current_err_rate = 0
 
-                for i in range(len(valid_samples)):
+                for i in range(len(valid_data)):
                     if predicted_labels[i] != valid_labels[i]:
                         current_err_rate += 1
 

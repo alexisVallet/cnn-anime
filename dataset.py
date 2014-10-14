@@ -4,80 +4,6 @@ import numpy as np
 import os, struct
 from array import array
 
-class Dataset:
-    """ A dataset of samples intended for comsumption by a convnet. 4 rules:
-        - a dataset is an iterator of samples (method next())
-        - there is a finite, nonzero and known number of samples (len(dataset))
-        - all samples are numpy tensors with known and constant shape (list attribute sample_shape)
-        - the samples can be iterated through in random order (method shuffle())
-    """
-    def shuffle(self):
-        raise NotImplementedError()
-
-    def __iter__(self):
-        raise NotImplementedError()
-
-    def next(self):
-        """ A dataset of sample is an iterator of samples.
-        """
-        raise NotImplementedError()
-
-    def __len__(self):
-        """ Returns the number of samples of the dataset.
-        """
-        raise NotImplementedError()
-
-class DatasetMixin:
-    def to_array(self):
-        """ Dumps the whole dataset into a big numpy array. Do not use
-            unless you know the dataset fits into memory.
-
-        Returns:
-           a (len(self) + self.sample_shape) shaped numpy array, containing
-           all the samples stacked together.
-        """
-        samples_array = np.empty(
-            [len(self)] + self.sample_shape,
-            theano.config.floatX
-        )
-        i = 0
-        for sample in iter(self):
-            samples_array[i] = sample
-            i += 1
-
-        return samples_array
-
-class BaseListDataset(Dataset):
-    """ A very simple dataset implemented as a list of samples.
-    """
-    def __init__(self, samples):
-        assert len(samples) > 0
-        self.samples = samples
-        self.sample_shape = list(self.samples[0].shape)
-        assert np.all([list(sample.shape) == self.sample_shape for sample in samples])
-        self.permutation = np.array(range(len(samples)))
-
-    def shuffle(self, permutation):
-        self.permutation = permutation
-
-    def __iter__(self):
-        self.cur_idx = 0
-
-        return self
-
-    def next(self):
-        if self.cur_idx >= len(self.samples):
-            raise StopIteration
-        self.cur_idx += 1
-
-        return self.samples[self.permutation[self.cur_idx - 1]]
-
-    def __len__(self):
-        return len(self.samples)
-
-class ListDataset(BaseListDataset, DatasetMixin):
-    pass
-
 def load_mnist(img_fname, lbl_fname):
     """ Load the MNIST dataset in a list dataset from a pickled file.
         This code was heavily inspired by cvxopt's (GPL licensed) code 
@@ -121,43 +47,104 @@ def load_mnist(img_fname, lbl_fname):
         images.append(image)
         labels[i] = lbl[i]
 
-    return ListDataset(images), labels
-
-class BaseMeanSubtraction(Dataset):
-    """ Dataset which subtracts the mean pixel value of an image dataset.
+    return ListDataset(images, labels)
+    
+class Dataset:
+    """ A dataset of samples intended for comsumption by a convnet. 4 rules:
+        - to each sample can be associated arbitrary data (usually labels or dropout matrices)
+        - a dataset is an iterator of (sample, data) (method next()).
+        - there is a finite, nonzero and known number of samples (len(dataset))
+        - all samples are numpy tensors with known and constant shape (list attribute sample_shape)
+        - the samples can be iterated through in random order (method shuffle())
     """
-    def __init__(self, dataset):
-        assert len(dataset.sample_shape) == 3
-        self.dataset = dataset
-        self.sample_shape = dataset.sample_shape
+    def shuffle(self):
+        raise NotImplementedError()
 
     def __iter__(self):
-        # First accumulate the mean pixel value.
-        mean_pixel = np.zeros(
-            [self.dataset.sample_shape[0], 1, 1],
-            np.float64
-        )
-        nb_samples = len(self.dataset)
-        new_shape = ([self.dataset.sample_shape[0], 
-                      np.prod(self.dataset.sample_shape[1:])])
-        
-        for image in self.dataset:
-            mean_pixel += np.mean(
-                image.reshape(new_shape),
-                axis=1,
-                keepdims=True
-            ).astype(np.float64) / nb_samples
-        
-        mean_pixel = mean_pixel.astype(theano.config.floatX)
-        # Then subtract it from each image.
-        for image in self.dataset:
-            yield image - mean_pixel
+        raise NotImplementedError()
 
     def __len__(self):
-        return len(self.dataset)
+        """ Returns the number of samples of the dataset.
+        """
+        raise NotImplementedError()
+
+class DatasetMixin:
+    def to_array(self):
+        """ Dumps the whole dataset into a big numpy array. Do not use
+            unless you know the dataset fits into memory.
+        Returns:
+            a (len(self) + self.sample_shape) shaped numpy array, containing
+            all the samples stacked together.
+        """
+        samples_array = np.empty(
+            [len(self)] + self.sample_shape,
+            theano.config.floatX
+        )
+        i = 0
+        for sample_data in iter(self):
+            sample, data = sample_data
+            samples_array[i] = sample
+            i += 1
+        return samples_array
+
+class BaseListDataset(Dataset):
+    """ A very simple dataset implemented as a list of samples.
+    """
+    def __init__(self, samples, labels=None):
+        assert len(samples) > 0
+        self.samples = samples
+        self.labels = labels
+        self.sample_shape = list(self.samples[0].shape)
+        assert np.all([list(sample.shape) == self.sample_shape for sample in samples])
+        self.permutation = np.array(range(len(samples)))
 
     def shuffle(self, permutation):
-        self.dataset.shuffle(permutation)
+        self.permutation = permutation
 
-class MeanSubtraction(BaseMeanSubtraction, DatasetMixin):
+    def __iter__(self):
+        for i in range(self.permutation.size):
+            if self.labels == None:
+                yield (self.samples[self.permutation[i]],{})
+            else:
+                yield (
+                    self.samples[self.permutation[i]],
+                    {'label': self.labels[self.permutation[i]]}
+                )
+
+    def __len__(self):
+        return self.permutation.size
+
+class ListDataset(BaseListDataset, DatasetMixin):
+    pass
+
+class BaseLazyIO(Dataset):
+    """ Lazy loading of an image dataset.
+    """
+    def __init__(self, folder, filenames, labels=None):
+        assert len(filenames) > 0
+        self.folder = folder
+        self.filenames = filenames
+        self.labels = labels
+        self.permutation = np.array(range(len(filenames)))
+
+    def __iter__(self):
+        # Iterate through each filename, load it and yield the resulting image
+        # (converted to floatX, [0;1] range).
+        for i in range(len(self)):
+            bgr_image = cv2.imread(os.path.join(
+                self.folder,
+                self.filenames[self.permutation[i]]
+            ))
+            yield (
+                bgr_image.astype(theano.config.floatX) / 255,
+                {'label': self.labels[self.permutation[i]]}
+            )
+
+    def __len__(self):
+        return self.permutation.size
+
+    def shuffle(self, permutation):
+        self.permutation = permutation
+
+class LazyIO(BaseLazyIO, DatasetMixin):
     pass
