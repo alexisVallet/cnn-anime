@@ -62,7 +62,7 @@ def load_mnist(img_fname, lbl_fname):
 
     # Putting it all into the proper format.
     images = []
-    labels = np.empty([size], dtype=np.int32)
+    labels = []
 
     for i in range(size):
         # Convert the image to floating point [0;1] range while we're at it.
@@ -71,16 +71,14 @@ def load_mnist(img_fname, lbl_fname):
             theano.config.floatX
         ).reshape([1, rows, cols]) / 255.
         images.append(image)
-        labels[i] = lbl[i]
+        labels.append(lbl[i])
 
     return ListDataset(images, labels)
     
 class Dataset:
-    """ A dataset of samples intended for comsumption by a convnet. 4 rules:
-        - to each sample can be associated arbitrary data (usually labels or dropout matrices)
-        - a dataset is an iterator of (sample, data) (method next()).
+    """ A dataset of samples intended for comsumption by a convnet. 3 rules:
+        - a dataset is an iterator of samples (method next()).
         - there is a finite, nonzero and known number of samples (len(dataset))
-        - all samples are numpy tensors with known and constant shape (list attribute sample_shape)
         - the samples can be iterated through in random order (method shuffle())
     """
     def shuffle(self):
@@ -94,6 +92,11 @@ class Dataset:
         """
         raise NotImplementedError()
 
+    def get_labels(self):
+        """ Returns a list of frozenset of labels for each sample.
+        """
+        raise NotImplementedError()
+    
 class DatasetMixin:
     def to_array(self):
         """ Dumps the whole dataset into a big numpy array. Do not use
@@ -107,8 +110,7 @@ class DatasetMixin:
             theano.config.floatX
         )
         i = 0
-        for sample_data in iter(self):
-            sample, data = sample_data
+        for sample in iter(self):
             samples_array[i] = sample
             i += 1
         return samples_array
@@ -116,7 +118,7 @@ class DatasetMixin:
 class BaseListDataset(Dataset):
     """ A very simple dataset implemented as a list of samples.
     """
-    def __init__(self, samples, labels=None):
+    def __init__(self, samples, labels):
         assert len(samples) > 0
         self.samples = samples
         self.labels = labels
@@ -132,13 +134,19 @@ class BaseListDataset(Dataset):
             if self.labels == None:
                 yield (self.samples[self.permutation[i]],{})
             else:
-                yield (
-                    self.samples[self.permutation[i]],
-                    {'label': self.labels[self.permutation[i]]}
-                )
+                yield self.samples[self.permutation[i]]
 
     def __len__(self):
         return self.permutation.size
+
+    def get_labels(self):
+        # Apply the permutation to the labels.
+        permut_labels = []
+
+        for i in range(self.permutation.size):
+            permut_labels.append(self.labels[self.permutation[i]])
+        
+        return permut_labels
 
 class ListDataset(BaseListDataset, DatasetMixin):
     pass
@@ -146,7 +154,7 @@ class ListDataset(BaseListDataset, DatasetMixin):
 class BaseLazyIO(Dataset):
     """ Lazy loading of an image dataset.
     """
-    def __init__(self, folder, filenames, labels=None):
+    def __init__(self, folder, filenames, labels):
         assert len(filenames) > 0
         self.folder = folder
         self.filenames = filenames
@@ -161,16 +169,22 @@ class BaseLazyIO(Dataset):
                 self.folder,
                 self.filenames[self.permutation[i]]
             ))
-            yield (
-                bgr_image.astype(theano.config.floatX) / 255,
-                {'label': self.labels[self.permutation[i]]}
-            )
+            yield bgr_image.astype(theano.config.floatX) / 255
 
     def __len__(self):
         return self.permutation.size
 
     def shuffle(self, permutation):
         self.permutation = permutation
+
+    def get_labels(self):
+        # Apply the permutation to the labels.
+        permut_labels = []
+
+        for i in range(self.permutation.size):
+            permut_labels.append(self.labels[self.permutation[i]])
+        
+        return permut_labels
 
 class LazyIO(BaseLazyIO, DatasetMixin):
     pass

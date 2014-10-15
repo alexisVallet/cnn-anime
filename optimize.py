@@ -145,8 +145,9 @@ class SGD:
             permutation = np.random.permutation(len(samples))
             samples.shuffle(permutation)
             samples_iterator = iter(samples)
+            train_labels = samples.get_labels()
             avg_cost = np.array([0], theano.config.floatX)
-
+            
             for i in range(nb_batches):
                 # Select the batch.
                 batch_size = splits[i+1] - splits[i]
@@ -154,14 +155,11 @@ class SGD:
                     [batch_size] + samples.sample_shape,
                     theano.config.floatX
                 )
-                new_labels = np.empty([batch_size], np.int32)
                 
                 for j in range(batch_size):
-                    sample, data = samples_iterator.next()
-                    new_batch[j] = sample
-                    new_labels[j] = data['label']
+                    new_batch[j] = samples_iterator.next()
                 batch.set_value(new_batch)
-                batch_labels.set_value(new_labels)
+                batch_labels.set_value(train_labels[splits[i]:splits[i+1]])
                 
                 # Run the iteration.
                 cost_val = run_iteration()
@@ -192,15 +190,11 @@ class SGD:
                     [len(valid_data)] + valid_data.sample_shape,
                     theano.config.floatX
                 )
-                valid_labels = []
+                tofrozenset = lambda l: l if isinstance(l, frozenset) else frozenset([l])
+                valid_labels = map(tofrozenset, valid_data.get_labels())
                 i = 0
-                for sample_label in valid_data:
-                    sample, data = sample_label
+                for sample in valid_data:
                     valid_samples[i] = sample
-                    # A bit of ugly hacking to deal with both single label datasets and
-                    # multi-label datasets.
-                    valid_labels.append(data['label'] if isinstance(data['label'], frozenset)
-                                        else frozenset([data['label']]))
                     i += 1
                 predicted_labels = map(
                     lambda i: set([i]),
