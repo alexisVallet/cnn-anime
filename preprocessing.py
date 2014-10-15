@@ -29,15 +29,17 @@ class DatasetTransformerMixin:
             self.parent = parent
 
         def __iter__(self):
-            for sample_data in self.dataset:
-                sample, data = sample_data
-                yield (self.parent.test_sample_transform(sample), data)
+            for sample in self.dataset:
+                yield self.parent.test_sample_transform(sample)
 
         def __len__(self):
             return len(self.dataset)
 
         def shuffle(self, permutation):
             self.dataset.shuffle(permutation)
+
+        def get_labels(self):
+            return self.dataset.get_labels()
 
     class TestDataset(BaseTestDataset, DatasetMixin):
         pass
@@ -67,8 +69,7 @@ class BaseMeanSubtraction(DatasetTransformer):
             new_shape = ([self.dataset.sample_shape[0], 
                         np.prod(self.dataset.sample_shape[1:])])
             
-            for image_data in self.dataset:
-                image, data = image_data
+            for image in self.dataset:
                 self.mean_pixel += np.mean(
                     image.reshape(new_shape),
                     axis=1,
@@ -77,15 +78,17 @@ class BaseMeanSubtraction(DatasetTransformer):
             
             self.mean_pixel = self.mean_pixel.astype(theano.config.floatX)
             # Then subtract it from each image.
-            for image_data in self.dataset:
-                image, data = image_data
-                yield (image - self.mean_pixel, data)
+            for image in self.dataset:
+                yield image - self.mean_pixel
 
         def __len__(self):
             return len(self.dataset)
     
         def shuffle(self, permutation):
             self.dataset.shuffle(permutation)
+
+        def get_labels(self):
+            return self.dataset.get_labels()
 
     class TrainMeanSubtraction(BaseTrainMeanSubtraction, DatasetMixin):
         pass
@@ -103,4 +106,3 @@ class BaseMeanSubtraction(DatasetTransformer):
     
 class MeanSubtraction(BaseMeanSubtraction, DatasetTransformerMixin):
     pass
-

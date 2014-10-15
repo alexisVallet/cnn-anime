@@ -24,19 +24,16 @@ class TestCNNClassifier(unittest.TestCase):
         traindata.shuffle(perm)
         validsamples = []
         trainsamples = []
-        validlabels = []
-        trainlabels = []
+        trainlabels = traindata.get_labels()
+        validlabels = trainlabels[0:validation_size]
+        trainlabels = trainlabels[validation_size:]
         i = 0
-        t_i = 0
 
-        for sample_data in traindata:
-            sample, data = sample_data
+        for sample in traindata:
             if i < validation_size:
                 validsamples.append(sample)
-                validlabels.append(data['label'])
             else:
                 trainsamples.append(sample)
-                trainlabels.append(data['label'])
             i += 1
         cls.traindata = ListDataset(trainsamples, trainlabels)
         cls.validdata = ListDataset(validsamples, validlabels)
@@ -50,7 +47,7 @@ class TestCNNClassifier(unittest.TestCase):
         print "Initializing classifier..."
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 8, 5, 5),
+                ('conv', 8, 7, 7),
                 ('max-pool', 2),
                 ('fc', 512),
                 ('softmax', 10)
@@ -58,7 +55,7 @@ class TestCNNClassifier(unittest.TestCase):
             optimizer=SGD(
                 batch_size=32,
                 init_rate=0.001,
-                nb_epochs=10,
+                nb_epochs=5,
                 learning_schedule=('decay', 0.1),
                 update_rule=('momentum', 0.9),
                 verbose=True

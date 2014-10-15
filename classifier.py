@@ -125,12 +125,13 @@ class ClassifierMixin:
         nb_samples = len(samples)
         nb_correct_top = np.zeros([nb_classes], np.int32)
         sample_it = iter(samples)
+        labels = samples.get_labels()
 
         for i in range(nb_samples):
-            sample, data = sample_it.next()
+            sample = sample_it.next()
             
             for j in range(nb_classes):
-                if data['label'] == sorted_classes[i,j]:
+                if labels[i] == sorted_classes[i,j]:
                     nb_correct_top[j:] += 1
                     break
 
