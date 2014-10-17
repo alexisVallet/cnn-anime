@@ -49,22 +49,18 @@ class TestMNIST(unittest.TestCase):
         
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 16, 5, 5, 'cuda-convnet'),
-                ('max-pool', 2),
-                ('conv', 16, 5, 5, 'cuda-convnet'),
-                ('max-pool', 2),
                 ('fc', 512),
                 ('softmax', 10)
             ],
             optimizer=SGD(
-                batch_size=32,
+                batch_size=50,
                 init_rate=0.001,
-                nb_epochs=5,
-                learning_schedule=('decay', 0.1),
+                nb_epochs=10,
+                learning_schedule=('decay', 1.),
                 update_rule=('momentum', 0.9),
                 verbose=1
             ),
-            l2_reg=10E-3,
+            l2_reg=0,
             input_shape=[1,28,28],
             init='random',
             preprocessing=[MeanSubtraction(1)],

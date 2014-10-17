@@ -2,6 +2,7 @@ import theano
 import theano.tensor as T
 from theano.tensor.signal.downsample import max_pool_2d
 from pylearn2.sandbox.cuda_convnet.filter_acts import FilterActs
+from pylearn2.sandbox.cuda_convnet.pool import MaxPool
 from theano.sandbox.cuda.basic_ops import gpu_contiguous
 import numpy as np
 from sklearn.cluster import KMeans
@@ -90,17 +91,10 @@ class BaseCNNClassifier:
         # Run the optimizer on the CNN cost function.
         if self.verbose:
             print "Optimizing the cost function..."
-        # Apply the FFT convolution optimization. Although it is applied to the whole
-        # graph, FFT convolutions are the only ones where we actually use nnet.conv2D,
-        # so only those get compiled away. For other convolutions, we use the specific
-        # ops.
-        mode = theano.compile.get_default_mode()
-        mode = mode.including('conv_fft_valid', 'conv_fft_full')
         self.optimizer.optimize(
             cnn,
             pp_dataset,
-            pp_valid_data,
-            compile_mode=mode
+            pp_valid_data
         )
 
     def predict_proba(self, images):
@@ -149,13 +143,13 @@ class BaseCNNClassifier:
                 input_dim = current_input_shape[0]
                 nb_filters, nb_rows, nb_cols = layer_arch[1:]
                 filters = std * np.random.standard_normal(
-                    [nb_filters, input_dim, nb_rows, nb_cols]
+                    [input_dim, nb_rows, nb_cols, nb_filters]
                 ).astype(theano.config.floatX)
                 biases = np.ones(
                     [nb_filters],
                     theano.config.floatX
                 )
-                layer = ConvLayer(filters, biases, impl)
+                layer = ConvLayer(filters, biases)
                 layers.append(layer)
                 nb_conv_mp += 1
                 current_input_shape = layer.output_shape(current_input_shape)
@@ -177,12 +171,6 @@ class BaseCNNClassifier:
                 weights = std * np.random.standard_normal(
                     [nb_inputs, nb_neurons]
                 ).astype(theano.config.floatX)
-                # w_bound = 4. * np.sqrt(6. / (nb_inputs + nb_neurons))
-                # weights =  np.random.uniform(
-                #     -w_bound, 
-                #     w_bound, 
-                #     [nb_inputs, nb_neurons]
-                # ).astype(theano.config.floatX)
                 biases = np.ones(
                     [nb_neurons],
                     theano.config.floatX
@@ -280,10 +268,10 @@ class CNN:
         for conv_mp_layer in self.conv_mp_layers:
             fpass = conv_mp_layer.forward_pass(fpass)
 
-        # Reshape the output (batch_size, nb_features, nb_rows, nb_cols)
-        # tensor into a data matrix (batch_size, nb_features * nb_rows * nb_cols)
+        # Reshape the output (nb_features, nb_rows, nb_cols, batch_size)
+        # tensor into a data matrix (nb_features * nb_rows * nb_cols, batch_size)
         # suitable to be fed to the FC layers.
-        fpass = T.flatten(fpass, outdim=2)
+        fpass = fpass.dimshuffle(3, 0, 1, 2).flatten(ndim=2)
 
         # Then accumulate the FC layer forward passes.
         for fc_layer in self.fc_layers:
@@ -324,7 +312,7 @@ class CNN:
         cost = - T.mean(
             T.log(self.forward_pass(batch)[T.arange(batch.shape[0]),
                                            labels])
-        ) + self.l2_reg * params_norm / 2
+        ) #+ self.l2_reg * params_norm / 2
 
         return cost
 
@@ -432,28 +420,25 @@ class ConvLayer(Layer):
         """
         assert len(init_filters.shape) == 4
         assert len(init_biases.shape) == 1
-        assert init_filters.shape[0] == init_biases.shape[0]
+        assert init_filters.shape[3] == init_biases.shape[0]
         # Store the initial filters in a shared variable.
         self.filters = theano.shared(init_filters)
         self.biases = theano.shared(init_biases)
         self.filters_shape = init_filters.shape
-        
+
     def forward_pass(self, fmaps):
         # Computes the raw convolution output, depending on the desired
         # implementation.
         conv_op = FilterActs()
-        inputs_shuffled = fmaps.dimshuffle(1, 2, 3, 0)
-        filters_shuffled = self.filters.dimshuffle(1, 2, 3, 0)
-        out_shuffled = conv_op(
-            gpu_contiguous(inputs_shuffled),
-            gpu_contiguous(filters_shuffled[:, ::-1, ::-1, :])
+        out_fmaps = conv_op(
+            gpu_contiguous(fmaps),
+            gpu_contiguous(self.filters[:, ::-1, ::-1, :])
         )
-        out_fmaps = out_shuffled.dimshuffle(3, 0, 1, 2)
-        nb_filters = self.filters_shape[0]
+        nb_filters = self.filters_shape[3]
         # Add biases and apply ReLU non-linearity.
         relu_fmaps = T.maximum(
             0, 
-            out_fmaps +  self.biases.reshape([1, nb_filters, 1, 1])
+            out_fmaps +  self.biases.reshape([nb_filters, 1, 1, 1])
         )
         return relu_fmaps
 
@@ -463,9 +448,9 @@ class ConvLayer(Layer):
 
     def output_shape(self, input_shape):
         return [
-            self.filters_shape[0],
-            input_shape[1] - self.filters_shape[2] + 1,
-            input_shape[2] - self.filters_shape[3] + 1
+            self.filters_shape[3],
+            input_shape[1] - self.filters_shape[1] + 1,
+            input_shape[2] - self.filters_shape[2] + 1
         ]
 
 class MaxPoolLayer(Layer):
@@ -481,7 +466,9 @@ class MaxPoolLayer(Layer):
         self.pooling_size = pooling_size
 
     def forward_pass(self, fmaps):
-        return max_pool_2d(fmaps, (self.pooling_size, self.pooling_size))
+        pool_op = MaxPool(self.pooling_size, self.pooling_size)
+        
+        return pool_op(gpu_contiguous(fmaps))
 
     def parameters(self):
         return []

@@ -1,6 +1,7 @@
 import theano
 import theano.tensor as T
 import numpy as np
+import cv2
 import time
 
 from metrics import multi_label_sample_accuracy
@@ -80,7 +81,7 @@ class SGD:
             largest_batch_size = max(batch_size, largest_batch_size)
         batch = theano.shared(
             np.empty(
-                [largest_batch_size] + samples.sample_shape,
+                samples.sample_shape + [largest_batch_size],
                 theano.config.floatX
             ),
             name='batch'
@@ -157,12 +158,12 @@ class SGD:
                 # Select the batch.
                 batch_size = splits[i+1] - splits[i]
                 new_batch = np.empty(
-                    [batch_size] + samples.sample_shape,
+                    samples.sample_shape + [batch_size],
                     theano.config.floatX
                 )
                 
                 for j in range(batch_size):
-                    new_batch[j] = samples_iterator.next()
+                    new_batch[:,:,:,j] = samples_iterator.next()
                 batch.set_value(new_batch)
                 batch_labels.set_value(train_labels[splits[i]:splits[i+1]])
                 prepare_end = time.clock()
@@ -200,14 +201,14 @@ class SGD:
                     )
 
                 valid_samples = np.empty(
-                    [len(valid_data)] + valid_data.sample_shape,
+                    valid_data.sample_shape + [len(valid_data)],
                     theano.config.floatX
                 )
                 tofrozenset = lambda l: l if isinstance(l, frozenset) else frozenset([l])
                 valid_labels = map(tofrozenset, valid_data.get_labels())
                 i = 0
                 for sample in valid_data:
-                    valid_samples[i] = sample
+                    valid_samples[:,:,:,i] = sample
                     i += 1
                 predicted_labels = map(
                     lambda i: set([i]),

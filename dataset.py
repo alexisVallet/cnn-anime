@@ -106,12 +106,12 @@ class DatasetMixin:
             all the samples stacked together.
         """
         samples_array = np.empty(
-            [len(self)] + self.sample_shape,
+            self.sample_shape + [len(self)],
             theano.config.floatX
         )
         i = 0
         for sample in iter(self):
-            samples_array[i] = sample
+            samples_array[:,:,:,i] = sample
             i += 1
         return samples_array
 
