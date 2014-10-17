@@ -1,6 +1,7 @@
-""" Unit tests for the convnet classifier.
+""" Unit tests for the convnet classifier using the MNIST dataset.
 """
 import unittest
+import theano
 import numpy as np
 import cv2
 
@@ -9,7 +10,7 @@ from dataset import load_mnist, ListDataset
 from preprocessing import MeanSubtraction
 from optimize import SGD
 
-class TestCNNClassifier(unittest.TestCase):
+class TestMNIST(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         print "Loading data..."
@@ -45,9 +46,12 @@ class TestCNNClassifier(unittest.TestCase):
 
     def test_cnn_classifier(self):
         print "Initializing classifier..."
+        
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 8, 7, 7),
+                ('conv', 16, 5, 5, 'cuda-convnet'),
+                ('max-pool', 2),
+                ('conv', 16, 5, 5, 'cuda-convnet'),
                 ('max-pool', 2),
                 ('fc', 512),
                 ('softmax', 10)
@@ -58,12 +62,12 @@ class TestCNNClassifier(unittest.TestCase):
                 nb_epochs=5,
                 learning_schedule=('decay', 0.1),
                 update_rule=('momentum', 0.9),
-                verbose=True
+                verbose=1
             ),
             l2_reg=10E-3,
             input_shape=[1,28,28],
             init='random',
-            preprocessing=[MeanSubtraction()],
+            preprocessing=[MeanSubtraction(1)],
             verbose=True
         )
         print "Training..."

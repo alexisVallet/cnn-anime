@@ -20,7 +20,7 @@ def load_pixiv_1M(images_folder, set_pkl):
     """
     fname_to_labels = None
     with open(set_pkl, 'rb') as dataset_file:
-        fname_to_label = pickle.load(dataset_file)
+        fname_to_labels = pickle.load(dataset_file)
     filenames = []
     labels = []
 
@@ -160,16 +160,29 @@ class BaseLazyIO(Dataset):
         self.filenames = filenames
         self.labels = labels
         self.permutation = np.array(range(len(filenames)))
+        self.sample_shape = None
 
     def __iter__(self):
         # Iterate through each filename, load it and yield the resulting image
-        # (converted to floatX, [0;1] range).
+        # (converted to floatX, [0;1] range, in (nb_channels, rows, cols) shape).
         for i in range(len(self)):
-            bgr_image = cv2.imread(os.path.join(
+            full_fname = os.path.join(
                 self.folder,
                 self.filenames[self.permutation[i]]
-            ))
-            yield bgr_image.astype(theano.config.floatX) / 255
+            )
+            bgr_image = cv2.imread(full_fname)
+            if bgr_image == None:
+                print "Unable to load " + repr(full_fname) + ", probably corrupt. Ignoring."
+                continue
+            rows, cols, nb_channels = bgr_image.shape
+            bgr_image_dimshfl = np.empty(
+                [nb_channels, rows, cols],
+                theano.config.floatX
+            )
+            for j in range(nb_channels):
+                bgr_image_dimshfl[j] = bgr_image[:,:,j]
+                
+            yield bgr_image_dimshfl / 255
 
     def __len__(self):
         return self.permutation.size

@@ -7,6 +7,7 @@ import numpy as np
 import sys
 import os.path
 from random import shuffle
+import cv2
 
 if __name__ == "__main__":
     # Use the same numbers for validation and test as ilsvrc 2014 classification.
@@ -26,6 +27,10 @@ if __name__ == "__main__":
         labels_dict = pickle.load(labels_dict_file)
 
     fname_labels = labels_dict.values()
+    # Remove corrupt images from the bunch.
+    fname_labels = map(lambda fandl: (os.path.basename(fandl[0]), fandl[1]), fname_labels)
+    fname_labels = filter(lambda fandl: cv2.imread('images/' + fandl[0]) != None, fname_labels)
+    print repr(len(fname_labels)) + " non-corrupt files."
     shuffle(fname_labels)
     test_set = {}
     i = 0
