@@ -20,17 +20,11 @@ class BaseCNNClassifier:
         Arguments:
             architecture
                 list of tuples which should be either:
-                - ('conv', nb_filters, nb_rows, nb_cols, impl) where impl must be
-                  either:
-                  * 'fft' for theano fft-based convolutions. Really expensive in memory
-                    but fastest. Ideal for large kernels on small feature maps.
-                  * 'cuda-convnet' for the pylearn2 cuda-convnet wrapper. Little memory
-                    footprint, especially fast for small kernels (3*3). Requires the number
+                - ('conv', nb_filters, nb_rows, nb_cols, impl), requires the number
                     of input channels to be <= 3 or divisible by 4, and the number of filters
                     to be a multiple of 16. Best performance with minibatches with a size multiple
                     of 128. Simpler way to put it: as long as you use multiples of 16s for number
                     of filters throughout the net, it will work.
-                  Either requires a GPU.
                 - ('max-pool', win_size)
                 - ('fc', nb_outputs)
                 - ('softmax', nb_outputs)
@@ -153,7 +147,7 @@ class BaseCNNClassifier:
         for layer_arch in self.architecture:
             if layer_arch[0] == 'conv':
                 input_dim = current_input_shape[0]
-                nb_filters, nb_rows, nb_cols, impl = layer_arch[1:]
+                nb_filters, nb_rows, nb_cols = layer_arch[1:]
                 filters = std * np.random.standard_normal(
                     [nb_filters, input_dim, nb_rows, nb_cols]
                 ).astype(theano.config.floatX)
@@ -423,7 +417,7 @@ class ConvLayer(Layer):
     """ Convolutional layer with ReLU non-linearity.
     """
     
-    def __init__(self, init_filters, init_biases, impl):
+    def __init__(self, init_filters, init_biases):
         """ Initializes a convolutional layer with a set of initial filters and 
             biases.
 
@@ -438,33 +432,23 @@ class ConvLayer(Layer):
         """
         assert len(init_filters.shape) == 4
         assert len(init_biases.shape) == 1
-        assert impl in ['fft', 'cuda-convnet']
         assert init_filters.shape[0] == init_biases.shape[0]
         # Store the initial filters in a shared variable.
         self.filters = theano.shared(init_filters)
         self.biases = theano.shared(init_biases)
         self.filters_shape = init_filters.shape
-        self.impl = impl
         
     def forward_pass(self, fmaps):
         # Computes the raw convolution output, depending on the desired
         # implementation.
-        out_fmaps = None
-        if self.impl == 'fft':
-            out_fmaps = T.nnet.conv.conv2d(
-                fmaps,
-                self.filters,
-                border_mode='valid'
-            )
-        elif self.impl == 'cuda-convnet':
-            conv_op = FilterActs()
-            inputs_shuffled = fmaps.dimshuffle(1, 2, 3, 0)
-            filters_shuffled = self.filters.dimshuffle(1, 2, 3, 0)
-            out_shuffled = conv_op(
-                gpu_contiguous(inputs_shuffled),
-                gpu_contiguous(filters_shuffled[:, ::-1, ::-1, :])
-            )
-            out_fmaps = out_shuffled.dimshuffle(3, 0, 1, 2)
+        conv_op = FilterActs()
+        inputs_shuffled = fmaps.dimshuffle(1, 2, 3, 0)
+        filters_shuffled = self.filters.dimshuffle(1, 2, 3, 0)
+        out_shuffled = conv_op(
+            gpu_contiguous(inputs_shuffled),
+            gpu_contiguous(filters_shuffled[:, ::-1, ::-1, :])
+        )
+        out_fmaps = out_shuffled.dimshuffle(3, 0, 1, 2)
         nb_filters = self.filters_shape[0]
         # Add biases and apply ReLU non-linearity.
         relu_fmaps = T.maximum(
