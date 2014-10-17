@@ -1,6 +1,7 @@
 import theano
 import theano.tensor as T
 import numpy as np
+import time
 
 from metrics import multi_label_sample_accuracy
 
@@ -8,7 +9,7 @@ class SGD:
     """ Implementation of stochastic gradient descent.
     """
     def __init__(self, batch_size, init_rate, nb_epochs, learning_schedule='fixed',
-                 update_rule='simple', accuracy_measure='sample', verbose=False):
+                 update_rule='simple', accuracy_measure='sample', verbose=0):
         """ Initialized the optimization method.
         
         Arguments:
@@ -40,7 +41,8 @@ class SGD:
                 - 'sample' for the regular, number of samples gotten right
                   measure.
             verbose
-                True for regular printed messages.
+                verbosity level: 0 for no messages, 1 for messages every epoch, 2
+                for messages every iteration.
         """
         self.batch_size = batch_size
         self.init_rate = init_rate
@@ -149,6 +151,9 @@ class SGD:
             avg_cost = np.array([0], theano.config.floatX)
             
             for i in range(nb_batches):
+                if self.verbose == 2:
+                    print "Preparing batch " + repr(i+1) + " out of " + repr(nb_batches)
+                prepare_start = time.clock()
                 # Select the batch.
                 batch_size = splits[i+1] - splits[i]
                 new_batch = np.empty(
@@ -160,10 +165,18 @@ class SGD:
                     new_batch[j] = samples_iterator.next()
                 batch.set_value(new_batch)
                 batch_labels.set_value(train_labels[splits[i]:splits[i+1]])
-                
+                prepare_end = time.clock()
+                if self.verbose == 2:
+                    print "Prepared the batch in " + repr(prepare_end - prepare_start) + " seconds."
                 # Run the iteration.
+                iter_start = time.clock()
                 cost_val = run_iteration()
+                iter_end = time.clock()
                 avg_cost += cost_val
+                if self.verbose == 2:
+                    print "Batch " + repr(i+1) + " out of " + repr(nb_batches)
+                    print "Cost running average: " + repr(avg_cost / (i+1))
+                    print "Processed in " + repr(iter_end - iter_start) + " seconds."
             # Learning schedule.
             if self.learning_schedule == 'constant':
                 pass
@@ -203,7 +216,7 @@ class SGD:
                 current_acc = multi_label_sample_accuracy(valid_labels, predicted_labels)
 
                 if current_acc != None and prev_acc >= current_acc:
-                    if self.verbose:
+                    if self.verbose >= 1:
                         print "Validation accuracy not increasing, decaying."
                     learning_rate.set_value(
                         np.float32(learning_rate.get_value() * decay)
@@ -213,7 +226,7 @@ class SGD:
                 raise ValueError(repr(self.learning_schedule) 
                                  + " is not a valid learning schedule!")
             
-            if self.verbose:
+            if self.verbose >= 1:
                 print "Epoch " + repr(t)
                 print "Cost: " + repr(avg_cost / nb_batches)
                 if prev_acc != None:
