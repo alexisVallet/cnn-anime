@@ -22,16 +22,16 @@ def benchmark_convolution(conv_func, input_shape, kernel_shape):
     return float(avg_time) / 10
 
 if __name__ == "__main__":
-    # FFT convolution
-    mode = theano.compile.get_default_mode()
-    mode = mode.including('conv_fft_valid', 'conv_fft_full')
     fmaps = T.tensor4('fmaps')
     kernels = T.tensor4('kernels')
-    fft_conv = theano.function(
-        [fmaps, kernels],
-        T.nnet.conv2d(fmaps, kernels),
-        mode=mode
-    )
+    # FFT convolution
+    # mode = theano.compile.get_default_mode()
+    # mode = mode.including('conv_fft_valid', 'conv_fft_full')
+    # fft_conv = theano.function(
+    #     [fmaps, kernels],
+    #     T.nnet.conv2d(fmaps, kernels),
+    #     mode=mode
+    # )
     # GEMM convolution
     mode = theano.compile.get_default_mode()
     mode = mode.including('conv_gemm')
@@ -53,6 +53,16 @@ if __name__ == "__main__":
         [fmaps, kernels],
         out_fmaps
     )
+
+    # cudnn
+    mode = theano.compile.get_default_mode()
+    mode = mode.including('cudnn')
+    cudnn_conv = theano.function(
+        [fmaps, kernels],
+        T.nnet.conv2d(fmaps, kernels),
+        mode=mode
+    )
+    
     test_shapes = [
         ([128, 3, 128, 128], [96, 3, 11, 11]),
         ([128, 64, 64, 64], [128, 64, 9, 9]),
@@ -64,9 +74,9 @@ if __name__ == "__main__":
     for shapes in test_shapes:
         inp_shape, ker_shape = shapes
         print shapes
-        print "FFT"
-        print benchmark_convolution(fft_conv, inp_shape, ker_shape)
         print "GEMM"
         print benchmark_convolution(gemm_conv, inp_shape, ker_shape)
         print "cuda-convnet"
         print benchmark_convolution(cuda_convnet_conv, inp_shape, ker_shape)
+        print "cudnn"
+        print benchmark_convolution(cudnn_conv, inp_shape, ker_shape)

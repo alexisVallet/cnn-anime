@@ -141,6 +141,7 @@ class SGD:
         )
         predict_label = None
         prev_acc = None
+        prev_dec = 0
 
         # Run the actual iterations, shuffling the dataset at each epoch.
         for t in range(1, self.nb_epochs + 1):
@@ -183,7 +184,7 @@ class SGD:
             elif self.learning_schedule[0] == 'decay':
                 # Compute a validation error rate, decay the learning rate
                 # if it didn't decrease since last epoch.
-                decay = self.learning_schedule[1]
+                decay, delay = self.learning_schedule[1:]
                 # If the validation error rate function wasn't compiled yet,
                 # do it. We assume the validation set fits into VRAM for GPU
                 # implementations, which might be a tad unrealistic. In the
@@ -216,11 +217,17 @@ class SGD:
                 current_acc = multi_label_sample_accuracy(valid_labels, predicted_labels)
 
                 if current_acc != None and prev_acc >= current_acc:
-                    if self.verbose >= 1:
-                        print "Validation accuracy not increasing, decaying."
-                    learning_rate.set_value(
-                        np.float32(learning_rate.get_value() * decay)
-                    )
+                    if prev_dec == delay:
+                        if self.verbose >= 1:
+                            print "Validation accuracy not increasing, decaying."
+                        learning_rate.set_value(
+                            np.float32(learning_rate.get_value() * decay)
+                        )
+                        prev_dec == 0
+                    else:
+                        prev_dec += 1
+                else:
+                    prev_dec == 0
                 prev_acc = current_acc
             else:
                 raise ValueError(repr(self.learning_schedule) 
