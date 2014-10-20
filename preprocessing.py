@@ -254,16 +254,19 @@ class NameLabels(DatasetTransformer):
         self.label_to_int = None
 
     class BaseNameLabelsSet(Dataset):
-        def __init__(self, dataset, label_to_int=None):
+        def __init__(self, dataset):
             self.dataset = dataset
             self.sample_shape = dataset.sample_shape
-            if label_to_int == None:
-                self.int_to_label = list(set(list(dataset.get_labels())))
-                self.label_to_int = {}
-                for i in range(len(self.int_to_label)):
-                    self.label_to_int[self.int_to_label[i]] = i
-            else:
-                self.label_to_int = label_to_int
+            self.int_to_label = list(set(
+                reduce(
+                    lambda lset, l: lset.union(l) if isinstance(l, frozen,
+                    dataset.get_labels(),
+                    
+                )
+            ))
+            self.label_to_int = {}
+            for i in range(len(self.int_to_label)):
+                self.label_to_int[self.int_to_label[i]] = i
     
         def __iter__(self):
             return iter(self.dataset)
@@ -275,14 +278,56 @@ class NameLabels(DatasetTransformer):
             self.dataset.shuffle(permutation)
 
         def get_labels(self):
+            def names_to_int(names):
+                if isinstance(names, str):
+                    return self.label_to_int[names]
+                elif isinstance(names, frozenset):
+                    return frozenset(map(
+                        lambda name: self.label_to_int[name],
+                        names
+                    ))
+            
             return map(
-                lambda name: self.label_to_int[name],
+                names_to_int,
                 self.dataset.get_labels()
             )
 
     class NameLabelsSet(BaseNameLabelsSet, DatasetMixin):
         pass
 
+    class BaseTestNameLabelsSet(Dataset):
+        def __init__(self, dataset, label_to_int):
+            self.dataset = dataset
+            self.sample_shape = dataset.sample_shape
+            self.label_to_int = label_to_int
+    
+        def __iter__(self):
+            return iter(self.dataset)
+
+        def __len__(self):
+            return len(self.dataset)
+
+        def shuffle(self, permutation):
+            self.dataset.shuffle(permutation)
+        
+        def get_labels(self):
+            def names_to_int(names):
+                if isinstance(names, str):
+                    return self.label_to_int[names]
+                elif isinstance(names, frozenset):
+                    return frozenset(map(
+                        lambda name: self.label_to_int[name],
+                        names
+                    ))
+            
+            return map(
+                names_to_int,
+                self.dataset.get_labels()
+            )
+
+    class TestNameLabelsSet(BaseTestNameLabelsSet, DatasetMixin):
+        pass
+        
     def train_data_transform(self, dataset):
         new_set = self.NameLabelsSet(dataset)
         self.label_to_int = new_set.label_to_int
@@ -290,4 +335,4 @@ class NameLabels(DatasetTransformer):
         return new_set
 
     def test_data_transform(self, test_data):
-        return self.NameLabelsSet(test_data, self.label_to_int)
+        return self.TestNameLabelsSet(test_data, self.label_to_int)

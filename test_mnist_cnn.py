@@ -7,7 +7,7 @@ import cv2
 
 from cnn_classifier import CNNClassifier
 from dataset import load_mnist, ListDataset
-from preprocessing import MeanSubtraction
+from preprocessing import MeanSubtraction, NameLabels
 from optimize import SGD
 
 class TestMNIST(unittest.TestCase):
@@ -60,7 +60,7 @@ class TestMNIST(unittest.TestCase):
             optimizer=SGD(
                 batch_size=32,
                 init_rate=0.001,
-                nb_epochs=15,
+                nb_epochs=5,
                 learning_schedule=('decay', 0.1, 5),
                 update_rule=('momentum', 0.9),
                 verbose=1
@@ -68,13 +68,16 @@ class TestMNIST(unittest.TestCase):
             l2_reg=10E-3,
             input_shape=[1,28,28],
             init='random',
-            preprocessing=[MeanSubtraction(1)],
+            preprocessing=[
+                MeanSubtraction(1),
+                NameLabels()
+            ],
             verbose=True
         )
         print "Training..."
         classifier.train(self.traindata, self.validdata)
         print "Predicting..."
-        print classifier.top_accuracy(self.testdata)
+        print classifier.mlabel_accuracy(self.testdata)
 
 if __name__ == "__main__":
     unittest.main()

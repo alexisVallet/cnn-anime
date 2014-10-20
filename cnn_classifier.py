@@ -66,7 +66,7 @@ class BaseCNNClassifier:
             [test_samples],
             cnn.forward_pass(test_samples)
         )
-        self._predict_label = theano.function(
+        self._predict_labels = theano.function(
             [test_samples],
             T.argmax(cnn.forward_pass(test_samples), axis=1)
         )
@@ -108,14 +108,14 @@ class BaseCNNClassifier:
         
         return self._predict_proba(pp_images.to_array())
 
-    def predict_label(self, images):
+    def predict_labels(self, images):
         # Run the preprocessing pipeline.
         pp_images = images
 
         for preproc in self.preprocessing:
             pp_images = preproc.test_data_transform(pp_images)
         
-        return self._predict_proba(pp_images.to_array())
+        return self._predict_labels(pp_images.to_array())
 
     def init_random(self):
         """ Initializes a convolutional neural network at random given an 

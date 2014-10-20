@@ -9,6 +9,8 @@ import numpy as np
 import itertools
 from random import shuffle
 
+from metrics import multi_label_sample_accuracy
+
 class ClassifierMixin:
     """ Mixin for classifiers adding grid search functionality, as well
         as named labels. The class should implement the following:
@@ -137,5 +139,20 @@ class ClassifierMixin:
 
         return nb_correct_top.astype(np.float64) / nb_samples
 
-    def top_accuracy_named(self, samples, labels):
-        return self.top_accuracy(samples, self.name_to_int_test(labels))
+    def mlabel_accuracy(self, test_samples):
+        """ Compute multi label accuracy, given a classifier that actually only
+            outputs one (weird I know).
+        """
+        expected = map(
+            lambda l: l if isinstance(l, frozenset) else frozenset([l]),
+            test_samples.get_labels()
+        )
+        predicted = map(
+            lambda l: l if isinstance(l, frozenset) else frozenset([l]),
+            self.predict_labels(test_samples)
+        )
+
+        print expected[0:10]
+        print predicted[0:10]
+        
+        return multi_label_sample_accuracy(expected, predicted)

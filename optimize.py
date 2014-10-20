@@ -164,13 +164,13 @@ class SGD:
                 
                 for j in range(batch_size):
                     new_batch[j] = samples_iterator.next()
-                batch.set_value(new_batch)
-                batch_labels.set_value(train_labels[splits[i]:splits[i+1]])
                 prepare_end = time.clock()
                 if self.verbose == 2:
                     print "Prepared the batch in " + repr(prepare_end - prepare_start) + " seconds."
                 # Run the iteration.
                 iter_start = time.clock()
+                batch.set_value(new_batch)
+                batch_labels.set_value(train_labels[splits[i]:splits[i+1]])
                 cost_val = run_iteration()
                 iter_end = time.clock()
                 avg_cost += cost_val
