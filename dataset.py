@@ -71,7 +71,7 @@ def load_mnist(img_fname, lbl_fname):
             theano.config.floatX
         ).reshape([1, rows, cols]) / 255.
         images.append(image)
-        labels.append(lbl[i])
+        labels.append(str(lbl[i]))
 
     return ListDataset(images, labels)
     
