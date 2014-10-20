@@ -31,19 +31,27 @@ class TestPixiv(unittest.TestCase):
         
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 64, 5, 5, 'cuda-convnet'),
-                ('max-pool', 4),
-                ('softmax', 1024)
+                ('conv', 48, 11, 11, 4, 4),
+                ('max-pool', 2),
+                ('conv', 128, 5, 5, 1, 1),
+                ('max-pool', 2),
+                ('conv', 192, 3, 3, 1, 1),
+                ('conv', 192, 3, 3, 1, 1),
+                ('conv', 128, 3, 3, 1, 1),
+                ('max-pool', 2),
+                ('fc', 2048),
+                ('fc', 2048),
+                ('softmax', 100)
             ],
             optimizer=SGD(
                 batch_size=256,
                 init_rate=0.001,
-                nb_epochs=1,
-                learning_schedule=('decay', 0.1),
+                nb_epochs=15,
+                learning_schedule=('decay', 0.1, 5),
                 update_rule=('momentum', 0.9),
                 verbose=2
             ),
-            l2_reg = 5E-4,
+            l2_reg = 0,
             input_shape=[3,256,256],
             init='random',
             preprocessing=[

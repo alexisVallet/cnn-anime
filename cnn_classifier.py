@@ -3,6 +3,7 @@ import theano.tensor as T
 from theano.tensor.signal.downsample import max_pool_2d
 from pylearn2.sandbox.cuda_convnet.filter_acts import FilterActs
 from theano.sandbox.cuda.basic_ops import gpu_contiguous
+from theano.sandbox.cuda.dnn import dnn_conv
 import numpy as np
 from sklearn.cluster import KMeans
 
@@ -20,18 +21,7 @@ class BaseCNNClassifier:
         Arguments:
             architecture
                 list of tuples which should be either:
-                - ('conv', nb_filters, nb_rows, nb_cols, impl) where impl must be
-                  either:
-                  * 'fft' for theano fft-based convolutions. Really expensive in memory
-                    but fastest. Ideal for large kernels on small feature maps.
-                  * 'cuda-convnet' for the pylearn2 cuda-convnet wrapper. Little memory
-                    footprint, especially fast for small kernels (3*3). Requires the number
-                    of input channels to be <= 3 or divisible by 4, and the number of filters
-                    to be a multiple of 16. Best performance with minibatches with a size multiple
-                    of 128. Simpler way to put it: as long as you use multiples of 16s for number
-                    of filters throughout the net, it will work.
-                  Either requires a GPU.
-                - ('max-pool', win_size)
+                - ('conv', nb_filters, nb_rows, nb_cols, pool_r, pool_c)
                 - ('fc', nb_outputs)
                 - ('softmax', nb_outputs)
             optimizer
@@ -101,7 +91,7 @@ class BaseCNNClassifier:
         # so only those get compiled away. For other convolutions, we use the specific
         # ops.
         mode = theano.compile.get_default_mode()
-        mode = mode.including('conv_fft_valid', 'conv_fft_full')
+        mode = mode.including('cudnn')
         self.optimizer.optimize(
             cnn,
             pp_dataset,
@@ -153,15 +143,15 @@ class BaseCNNClassifier:
         for layer_arch in self.architecture:
             if layer_arch[0] == 'conv':
                 input_dim = current_input_shape[0]
-                nb_filters, nb_rows, nb_cols, impl = layer_arch[1:]
+                nb_filters, nb_rows, nb_cols, pool_r, pool_c = layer_arch[1:]
                 filters = std * np.random.standard_normal(
                     [nb_filters, input_dim, nb_rows, nb_cols]
                 ).astype(theano.config.floatX)
                 biases = np.ones(
-                    [nb_filters],
+                    [1, nb_filters, 1, 1],
                     theano.config.floatX
                 )
-                layer = ConvLayer(filters, biases, impl)
+                layer = ConvLayer(filters, biases, (pool_r, pool_c))
                 layers.append(layer)
                 nb_conv_mp += 1
                 current_input_shape = layer.output_shape(current_input_shape)
@@ -420,10 +410,10 @@ class FCLayer(Layer):
         return [self.nb_outputs]
 
 class ConvLayer(Layer):
-    """ Convolutional layer with ReLU non-linearity.
+    """ Convolutional layer with ReLU non-linearity and max-pooling.
     """
     
-    def __init__(self, init_filters, init_biases, impl):
+    def __init__(self, init_filters, init_biases, pooling=(1,1)):
         """ Initializes a convolutional layer with a set of initial filters and 
             biases.
 
@@ -437,39 +427,28 @@ class ConvLayer(Layer):
                 optimizations.
         """
         assert len(init_filters.shape) == 4
-        assert len(init_biases.shape) == 1
-        assert impl in ['fft', 'cuda-convnet']
-        assert init_filters.shape[0] == init_biases.shape[0]
+        assert len(init_biases.shape) == 4
+        assert init_filters.shape[0] == init_biases.shape[1]
         # Store the initial filters in a shared variable.
         self.filters = theano.shared(init_filters)
         self.biases = theano.shared(init_biases)
         self.filters_shape = init_filters.shape
-        self.impl = impl
+        self.pooling = pooling
         
     def forward_pass(self, fmaps):
         # Computes the raw convolution output, depending on the desired
         # implementation.
-        out_fmaps = None
-        if self.impl == 'fft':
-            out_fmaps = T.nnet.conv.conv2d(
-                fmaps,
-                self.filters,
-                border_mode='valid'
-            )
-        elif self.impl == 'cuda-convnet':
-            conv_op = FilterActs()
-            inputs_shuffled = fmaps.dimshuffle(1, 2, 3, 0)
-            filters_shuffled = self.filters.dimshuffle(1, 2, 3, 0)
-            out_shuffled = conv_op(
-                gpu_contiguous(inputs_shuffled),
-                gpu_contiguous(filters_shuffled[:, ::-1, ::-1, :])
-            )
-            out_fmaps = out_shuffled.dimshuffle(3, 0, 1, 2)
+        out_fmaps = dnn_conv(
+            fmaps,
+            self.filters,
+            border_mode='valid',
+            subsample=self.pooling
+        )
         nb_filters = self.filters_shape[0]
         # Add biases and apply ReLU non-linearity.
         relu_fmaps = T.maximum(
             0, 
-            out_fmaps +  self.biases.reshape([1, nb_filters, 1, 1])
+            out_fmaps +  T.addbroadcast(self.biases, 0, 2, 3)
         )
         return relu_fmaps
 
@@ -478,10 +457,17 @@ class ConvLayer(Layer):
         return [self.filters, self.biases]
 
     def output_shape(self, input_shape):
-        return [
-            self.filters_shape[0],
+        out_shape = [
             input_shape[1] - self.filters_shape[2] + 1,
             input_shape[2] - self.filters_shape[3] + 1
+        ]
+        roffset = 0 if out_shape[0] % self.pooling[0] == 0 else 1
+        coffset = 0 if out_shape[1] % self.pooling[1] == 0 else 1
+
+        return [
+            self.filters_shape[0],
+            out_shape[0] // self.pooling[0] + roffset,
+            out_shape[1] // self.pooling[1] + coffset
         ]
 
 class MaxPoolLayer(Layer):
