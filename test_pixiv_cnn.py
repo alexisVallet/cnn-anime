@@ -28,15 +28,16 @@ class TestPixiv(unittest.TestCase):
 
     def test_pixiv(self):
         print "Initializing classifier..."
-        
+
+        batch_size = 256
         classifier = CNNClassifier(
             architecture=[
                 ('conv', 48, 11, 11, 4, 4),
                 ('max-pool', 2),
                 ('conv', 128, 5, 5, 1, 1),
                 ('max-pool', 2),
-                ('conv', 192, 3, 3, 1, 1),
-                ('conv', 192, 3, 3, 1, 1),
+                ('conv', 196, 3, 3, 1, 1),
+                ('conv', 196, 3, 3, 1, 1),
                 ('conv', 128, 3, 3, 1, 1),
                 ('max-pool', 2),
                 ('fc', 2048),
@@ -44,9 +45,9 @@ class TestPixiv(unittest.TestCase):
                 ('softmax', 100)
             ],
             optimizer=SGD(
-                batch_size=256,
+                batch_size=batch_size,
                 init_rate=0.001,
-                nb_epochs=15,
+                nb_epochs=10,
                 learning_schedule=('decay', 0.1, 5),
                 update_rule=('momentum', 0.9),
                 verbose=2
@@ -56,15 +57,14 @@ class TestPixiv(unittest.TestCase):
             init='random',
             preprocessing=[
                 SingleLabelConversion(),
-                NameLabels(),
                 FixedPatches(3, 256)
             ],
             verbose=True
         )
         print "Training..."
-        classifier.train(self.train_data, self.valid_data)
+        classifier.train_named(self.train_data, self.valid_data)
         print "Predicting..."
-        print classifier.top_accuracy(self.testdata)[0:10]
+        print classifier.mlabel_accuracy_named(self.testdata, batch_size)
 
 if __name__ == "__main__":
     unittest.main()
