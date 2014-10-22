@@ -99,7 +99,7 @@ class BaseCNNClassifier:
             compile_mode=mode
         )
 
-    def predict_proba(self, images):
+    def predict_probas(self, images):
         # Run the preprocessing pipeline.
         pp_images = images
 

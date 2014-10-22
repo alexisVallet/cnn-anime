@@ -5,6 +5,38 @@ import os, struct
 from array import array
 import cPickle as pickle
 
+def mini_batch_split(samples, batch_size):
+    """ Splits a dataset into roughly equal sized batches of roughly a
+        given size.
+
+    Arguments:
+        samples
+            dataset to split.
+        batch_size
+            number of samples in a given batch.
+    Returns:
+       an array of nb_batches+1 elements indicating starting (inclusive)
+       and ending (exclusive) indexes for batch i as splits[i] and splits[i+1]
+       respectively.
+    """
+    # Determine batches by picking the number of batch which,
+    # when used to divide the number of samples, best approximates
+    # the desired batch size.
+    flt_nb_samples = float(len(samples))
+    ideal_nb_batches = flt_nb_samples / batch_size
+    lower_nb_batches = np.floor(ideal_nb_batches)
+    upper_nb_batches = np.ceil(ideal_nb_batches)
+    lower_error = abs(flt_nb_samples / lower_nb_batches - batch_size)
+    upper_error = abs(flt_nb_samples / upper_nb_batches - batch_size)
+    nb_batches = (int(lower_nb_batches) if lower_error < upper_error 
+                  else int(upper_nb_batches))
+    # Split the dataset into that number of batches in roughly equal-sized
+    # batches.
+    return np.round(np.linspace(
+        0, len(samples), 
+        num=nb_batches+1)
+    ).astype(np.int32)
+
 def load_pixiv_1M(images_folder, set_pkl):
     """ Loads a dataset in the pixiv-1M format as a LazyIO dataset with multi-labels.
 
@@ -123,7 +155,6 @@ class BaseListDataset(Dataset):
         self.samples = samples
         self.labels = labels
         self.sample_shape = list(self.samples[0].shape)
-        assert np.all([list(sample.shape) == self.sample_shape for sample in samples])
         self.permutation = np.array(range(len(samples)))
 
     def shuffle(self, permutation):
@@ -131,10 +162,7 @@ class BaseListDataset(Dataset):
 
     def __iter__(self):
         for i in range(self.permutation.size):
-            if self.labels == None:
-                yield (self.samples[self.permutation[i]],{})
-            else:
-                yield self.samples[self.permutation[i]]
+            yield self.samples[self.permutation[i]]
 
     def __len__(self):
         return self.permutation.size
@@ -172,8 +200,7 @@ class BaseLazyIO(Dataset):
             )
             bgr_image = cv2.imread(full_fname)
             if bgr_image == None:
-                print "Unable to load " + repr(full_fname) + ", probably corrupt. Ignoring."
-                continue
+                raise ValueError("Unable to load " + repr(full_fname))
             rows, cols, nb_channels = bgr_image.shape
             bgr_image_dimshfl = np.empty(
                 [nb_channels, rows, cols],

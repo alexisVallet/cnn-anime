@@ -2,8 +2,10 @@ import theano
 import theano.tensor as T
 import numpy as np
 import time
+from collections import deque
 
 from metrics import multi_label_sample_accuracy
+from dataset import mini_batch_split
 
 class SGD:
     """ Implementation of stochastic gradient descent.
@@ -53,24 +55,8 @@ class SGD:
         self.verbose = verbose
 
     def optimize(self, model, samples, valid_data, compile_mode=None):
-        # Determine batches by picking the number of batch which,
-        # when used to divide the number of samples, best approximates
-        # the desired batch size.
-        flt_nb_samples = float(len(samples))
-        ideal_nb_batches = flt_nb_samples / self.batch_size
-        lower_nb_batches = np.floor(ideal_nb_batches)
-        upper_nb_batches = np.ceil(ideal_nb_batches)
-        lower_error = abs(flt_nb_samples / lower_nb_batches - self.batch_size)
-        upper_error = abs(flt_nb_samples / upper_nb_batches - self.batch_size)
-        nb_batches = (int(lower_nb_batches) if lower_error < upper_error 
-                      else int(upper_nb_batches))
-        # Split the dataset into that number of batches in roughly equal-sized
-        # batches.
-        splits = np.round(np.linspace(
-            0, len(samples), 
-            num=nb_batches+1)
-        ).astype(np.int32)
-        
+        splits = mini_batch_split(samples, self.batch_size)
+        nb_batches = splits.size - 1
         # Store mini-batches into a shared variable. Since theano shared variables
         # must have constant storage space, we'll initialize to the shape of the
         # largest batch.
@@ -135,7 +121,7 @@ class SGD:
 
         run_iteration = theano.function(
             [],
-            [cost],
+            cost,
             updates=updates,
             mode=compile_mode
         )
@@ -149,7 +135,8 @@ class SGD:
             samples.shuffle(permutation)
             samples_iterator = iter(samples)
             train_labels = samples.get_labels()
-            avg_cost = np.array([0], theano.config.floatX)
+            last_100_costs = deque()
+            avg_cost = 0.
             
             for i in range(nb_batches):
                 if self.verbose == 2:
@@ -173,10 +160,15 @@ class SGD:
                 batch_labels.set_value(train_labels[splits[i]:splits[i+1]])
                 cost_val = run_iteration()
                 iter_end = time.clock()
+
                 avg_cost += cost_val
+                last_100_costs.append(cost_val)
+                if len(last_100_costs) > 100:
+                    last_100_costs.popleft()
+                
                 if self.verbose == 2:
                     print "Batch " + repr(i+1) + " out of " + repr(nb_batches)
-                    print "Cost running average: " + repr(avg_cost / (i+1))
+                    print "Cost running average: " + repr(np.mean(last_100_costs))
                     print "Processed in " + repr(iter_end - iter_start) + " seconds."
             # Learning schedule.
             if self.learning_schedule == 'constant':
@@ -186,34 +178,35 @@ class SGD:
                 # if it didn't decrease since last epoch.
                 decay, delay = self.learning_schedule[1:]
                 # If the validation error rate function wasn't compiled yet,
-                # do it. We assume the validation set fits into VRAM for GPU
-                # implementations, which might be a tad unrealistic. In the
-                # future, it would be better to split it into mini-batches and
-                # accumulating the results to maximise the amount of memory to
-                # dedicate to model parameters - ideally, reusing the batch
-                # shared variable.
+                # do it. Use the already allocated batch shared variable to
+                # avoid consuming extra GPU memory.
                 if predict_label == None:
-                    vs = T.tensor4('valid_samples')
                     predict_label = theano.function(
-                        [vs],
-                        T.argmax(model.forward_pass(vs), axis=1),
+                        [],
+                        T.argmax(model.forward_pass(batch), axis=1),
                         mode=compile_mode
                     )
-
-                valid_samples = np.empty(
-                    [len(valid_data)] + valid_data.sample_shape,
-                    theano.config.floatX
-                )
+                # Compute prediction by splitting the validation set into mini-batches.
                 tofrozenset = lambda l: l if isinstance(l, frozenset) else frozenset([l])
                 valid_labels = map(tofrozenset, valid_data.get_labels())
-                i = 0
-                for sample in valid_data:
-                    valid_samples[i] = sample
-                    i += 1
-                predicted_labels = map(
-                    lambda i: set([i]),
-                    list(predict_label(valid_samples))
-                )
+                predicted_labels = []
+                valid_splits = mini_batch_split(valid_data, self.batch_size)
+                nb_valid_batches = valid_splits.size - 1
+                valid_iter = iter(valid_data)
+
+                for i in range(nb_valid_batches):
+                    cur_batch_size = valid_splits[i+1] - valid_splits[i]
+                    valid_samples_batch = np.empty(
+                        [cur_batch_size] + valid_data.sample_shape,
+                        theano.config.floatX
+                    )
+                    for j in range(cur_batch_size):
+                        valid_samples_batch[j] = valid_iter.next()
+                    batch.set_value(valid_samples_batch)
+                    predicted_labels += map(
+                        lambda i: frozenset([i]),
+                        list(predict_label())
+                    )
                 current_acc = multi_label_sample_accuracy(valid_labels, predicted_labels)
 
                 if current_acc != None and prev_acc >= current_acc:

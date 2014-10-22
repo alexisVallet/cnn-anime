@@ -46,7 +46,8 @@ class TestMNIST(unittest.TestCase):
 
     def test_cnn_classifier(self):
         print "Initializing classifier..."
-        
+
+        batch_size = 32
         classifier = CNNClassifier(
             architecture=[
                 ('conv', 8, 5, 5, 1, 1),
@@ -58,9 +59,9 @@ class TestMNIST(unittest.TestCase):
                 ('softmax', 10)
             ],
             optimizer=SGD(
-                batch_size=32,
+                batch_size=batch_size,
                 init_rate=0.001,
-                nb_epochs=5,
+                nb_epochs=10,
                 learning_schedule=('decay', 0.1, 5),
                 update_rule=('momentum', 0.9),
                 verbose=1
@@ -70,14 +71,13 @@ class TestMNIST(unittest.TestCase):
             init='random',
             preprocessing=[
                 MeanSubtraction(1),
-                NameLabels()
             ],
             verbose=True
         )
         print "Training..."
-        classifier.train(self.traindata, self.validdata)
+        classifier.train_named(self.traindata, self.validdata)
         print "Predicting..."
-        print classifier.mlabel_accuracy(self.testdata)
+        print classifier.mlabel_accuracy_named(self.testdata, batch_size)
 
 if __name__ == "__main__":
     unittest.main()

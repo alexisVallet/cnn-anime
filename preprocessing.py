@@ -257,13 +257,13 @@ class NameLabels(DatasetTransformer):
         def __init__(self, dataset):
             self.dataset = dataset
             self.sample_shape = dataset.sample_shape
-            self.int_to_label = list(set(
+            self.int_to_label = list(
                 reduce(
-                    lambda lset, l: lset.union(l) if isinstance(l, frozen,
+                    lambda lset, l: lset.union(l) if isinstance(l, frozenset) else lset.union([l]),
                     dataset.get_labels(),
-                    
+                    frozenset()
                 )
-            ))
+            )
             self.label_to_int = {}
             for i in range(len(self.int_to_label)):
                 self.label_to_int[self.int_to_label[i]] = i
@@ -331,6 +331,7 @@ class NameLabels(DatasetTransformer):
     def train_data_transform(self, dataset):
         new_set = self.NameLabelsSet(dataset)
         self.label_to_int = new_set.label_to_int
+        self.int_to_label = new_set.int_to_label
 
         return new_set
 

@@ -10,112 +10,56 @@ import itertools
 from random import shuffle
 
 from metrics import multi_label_sample_accuracy
+from preprocessing import NameLabels
+from dataset import mini_batch_split, ListDataset
 
 class ClassifierMixin:
-    """ Mixin for classifiers adding grid search functionality, as well
-        as named labels. The class should implement the following:
-        - train(samples, int_labels)
-        - predict(samples) -> int_labels
-        - verbose -> boolean
-        - a constructor which takes the arguments to perform grid search
-          on, and fully resets the classifier (ie. one can call __init__
-          multiple times without corrupting the state).
-    """
-    def predict_named(self, samples):
-        int_labels = self.predict(samples)
+    def train_named(self, train_samples, valid_samples):
+        self.named_conv = NameLabels()
+        int_train = self.named_conv.train_data_transform(train_samples)
+        int_valid = self.named_conv.test_data_transform(valid_samples)
+        self.train(int_train, int_valid)
+
+    def predict_labels_named(self, test_samples):
+        int_labels = self.predict_labels(
+            self.named_conv.test_data_transform(
+                test_samples
+            )
+        )
         return map(
-            lambda i: self.int_to_label[i],
-            self.predict(samples).tolist()
+            lambda ls: frozenset(map(lambda l: self.named_conv.int_to_label[l], ls)) if isinstance(ls, frozenset) else frozenset([self.named_conv.int_to_label[ls]]),
+            int_labels
         )
 
-    def name_to_int(self, labels):
-        """ Converts a collection of string labels to integer labels, storing
-            the correspondance in the self.int_to_label list.
+    def mini_batch_predict_labels_named(self, test_samples, batch_size):
+        """ Run prediction by splitting the test data into mini-batches. Useful
+            when the entire test set does not fit into GPU memory.
         """
-        self.int_to_label = list(set(labels))
-        self.label_to_int = {}
-        
-        for i in range(len(self.int_to_label)):
-            self.label_to_int[self.int_to_label[i]] = i
-        
-        int_labels = np.array(
-            map(lambda l: self.label_to_int[l], labels),
-            dtype=np.int32
-        )
+        splits = mini_batch_split(test_samples, batch_size)
+        nb_batches = splits.size - 1
+        predicted_labels = []
+        sample_it = iter(test_samples)
+        test_labels = test_samples.get_labels()
 
-        return int_labels
-
-    def name_to_int_test(self, labels):
-        return np.array(
-            map(lambda l: self.label_to_int[l], labels),
-            dtype=np.int32
-        )
-
-    def train_named(self, samples, labels):
-        self.train(samples, self.name_to_int(labels))
-
-    def train_gs_named(self, samples, labels, k, **args):
-        """ Trains a classifier with grid search using named labels.
-        """
-        return self.train_gs(samples, self.name_to_int(labels), k, **args)
-    
-    def train_validation(self, samples, labels, valid_size=0.2):
-        """ Trains the classifier, picking a random validation set out of the training
-            data.
-
-        Arguments:
-            samples
-                full training set of samples.
-            labels
-                labels for the training samples.
-            valid_size
-                fraction of the samples of each class in the dataset to pick. This is
-                not simply picking a random subset of the samples, as we still would
-                like each class to be represented equally - and by at least one sample.
-        """
-        nb_samples = len(samples)
-        nb_classes = np.unique(labels).size
-        assert nb_samples >= 2 * nb_classes
-        # Group the samples per class.
-        samples_per_class = []
-        for i in range(nb_classes):
-            samples_per_class.append([])
-        for i in range(nb_samples):
-            samples_per_class[labels[i]].append(samples[i])
-        # For each class, split into training and validation sets.
-        train_samples = []
-        train_labels = []
-        valid_samples = []
-        valid_labels = []
-        for i in range(nb_classes):
-            # We need at least one validation sample and one training sample.
-            nb_samples_class = len(samples_per_class[i])
-            assert nb_samples_class >= 2
-            nb_valid = min(
-                nb_samples_class - 1,
-                max(1, 
-                    int(round(valid_size * nb_samples_class))
+        for i in range(nb_batches):
+            cur_batch_size = splits[i+1] - splits[i]
+            batch = []
+            batch_labels = test_labels[splits[i]:splits[i+1]]
+            
+            for j in range(cur_batch_size):
+                batch.append(sample_it.next())
+            int_labels = self.predict_labels(
+                self.named_conv.test_data_transform(
+                    ListDataset(batch, batch_labels)
                 )
             )
-            nb_train = nb_samples_class - nb_valid
-            # Pick the sets randomly.
-            shflidxs = np.random.permutation(nb_samples_class)
-            j = 0
-            for k in range(nb_valid):
-                valid_samples.append(samples_per_class[i][shflidxs[j]])
-                valid_labels.append(i)
-                j += 1
-            for k in range(nb_train):
-                train_samples.append(samples_per_class[i][shflidxs[j]])
-                train_labels.append(i)
-                j += 1
-        # Run the actual training.
-        self.train(train_samples, np.array(train_labels, np.int32),
-                   valid_samples, np.array(valid_labels, np.int32))
-
-    def train_validation_named(self, samples, labels, valid_size=0.2):
-        self.train_validation(samples, self.name_to_int(labels), valid_size)
-
+            predicted_labels += map(
+                lambda ls: frozenset(map(lambda l: self.named_conv.int_to_label[l], ls)) if isinstance(ls, frozenset) else frozenset([self.named_conv.int_to_label[ls]]),
+                int_labels
+            )
+        return predicted_labels
+                
+    
     def top_accuracy(self, samples):
         """ Computes top-1 to to top-k accuracy of the classifier on test data,
             assuming it already has been trained, where k is the total number
@@ -139,7 +83,7 @@ class ClassifierMixin:
 
         return nb_correct_top.astype(np.float64) / nb_samples
 
-    def mlabel_accuracy(self, test_samples):
+    def mlabel_accuracy_named(self, test_samples, batch_size=None):
         """ Compute multi label accuracy, given a classifier that actually only
             outputs one (weird I know).
         """
@@ -149,10 +93,8 @@ class ClassifierMixin:
         )
         predicted = map(
             lambda l: l if isinstance(l, frozenset) else frozenset([l]),
-            self.predict_labels(test_samples)
+            self.predict_labels_named(test_samples) if batch_size == None
+            else self.mini_batch_predict_labels_named(test_samples, batch_size)
         )
-
-        print expected[0:10]
-        print predicted[0:10]
         
         return multi_label_sample_accuracy(expected, predicted)
