@@ -183,7 +183,7 @@ class SGD:
                 if predict_label == None:
                     predict_label = theano.function(
                         [],
-                        T.argmax(model.forward_pass(batch), axis=1),
+                        T.argmax(model.forward_pass(batch, test=True), axis=1),
                         mode=compile_mode
                     )
                 # Compute prediction by splitting the validation set into mini-batches.
@@ -216,11 +216,11 @@ class SGD:
                         learning_rate.set_value(
                             np.float32(learning_rate.get_value() * decay)
                         )
-                        prev_dec == 0
+                        prev_dec = 0
                     else:
                         prev_dec += 1
                 else:
-                    prev_dec == 0
+                    prev_dec = 0
                 prev_acc = current_acc
             else:
                 raise ValueError(repr(self.learning_schedule) 
