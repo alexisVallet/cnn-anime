@@ -4,6 +4,7 @@ from theano.tensor.signal.downsample import max_pool_2d
 from pylearn2.sandbox.cuda_convnet.filter_acts import FilterActs
 from theano.sandbox.cuda.basic_ops import gpu_contiguous
 from theano.sandbox.cuda.dnn import dnn_conv
+from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 import numpy as np
 from sklearn.cluster import KMeans
 
@@ -12,7 +13,7 @@ from classifier import ClassifierMixin
 class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
-    def __init__(self, architecture, optimizer, input_shape, init='random',
+    def __init__(self, architecture, optimizer, input_shape, srng, init='random',
                  l2_reg=0, preprocessing=[], verbose=False):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
@@ -24,11 +25,14 @@ class BaseCNNClassifier:
                 - ('conv', nb_filters, nb_rows, nb_cols, pool_r, pool_c)
                 - ('fc', nb_outputs)
                 - ('softmax', nb_outputs)
+                - ('dropout', dropout_proba)
             optimizer
                 optimization method to use for training the network. Should be
                 an instance of Optimizer.
             input_shape
                 shape of input images, in [nb_channels, nb_rows, nb_cols] format.
+            srng
+                shared random number generator to use for dropout and weights initialization.
             init
                 initialization procedure for the network. Can be:
                 - 'random' for random initialization of network weights.
@@ -42,6 +46,7 @@ class BaseCNNClassifier:
         self.architecture = architecture
         self.optimizer = optimizer
         self.input_shape = input_shape
+        self.srng = srng
         self.init = init
         self.l2_reg = l2_reg
         self.preprocessing = preprocessing
@@ -173,12 +178,6 @@ class BaseCNNClassifier:
                 weights = std * np.random.standard_normal(
                     [nb_inputs, nb_neurons]
                 ).astype(theano.config.floatX)
-                # w_bound = 4. * np.sqrt(6. / (nb_inputs + nb_neurons))
-                # weights =  np.random.uniform(
-                #     -w_bound, 
-                #     w_bound, 
-                #     [nb_inputs, nb_neurons]
-                # ).astype(theano.config.floatX)
                 biases = np.ones(
                     [nb_neurons],
                     theano.config.floatX
@@ -202,6 +201,15 @@ class BaseCNNClassifier:
                 layer = SoftmaxLayer(weights, biases)
                 layers.append(layer)
                 current_input_shape = layer.output_shape(current_input_shape)
+            elif layer_arch[0] == 'dropout':
+                drop_proba = layer_arch[1]
+                layer_srng = RandomStreams(np.random.randint(0, 200000000))
+                layers.append(DropoutLayer(
+                    drop_proba=drop_proba,
+                    srng=layer_srng,
+                    input_shape=current_input_shape
+                ))
+                nb_fc += 1
             else:
                 raise ValueError(repr(layer_arch) + 
                                  " is not a valid layer architecture.")
@@ -243,7 +251,7 @@ class CNN:
         """
         assert np.all([isinstance(l, ConvLayer) or isinstance(l, MaxPoolLayer)
                        for l in conv_mp_layers])
-        assert np.all([isinstance(l, FCLayer) for l in fc_layers])
+        assert np.all([isinstance(l, FCLayer) or isinstance (l, DropoutLayer) for l in fc_layers])
         assert isinstance(softmax_layer, SoftmaxLayer)
         self.conv_mp_layers = conv_mp_layers
         self.fc_layers = fc_layers
@@ -258,7 +266,7 @@ class CNN:
                       self.conv_mp_layers + self.fc_layers + [self.softmax_layer],
                       [])
 
-    def forward_pass(self, batch):
+    def forward_pass(self, batch, test=False):
         """ The forward pass of a convnet. This outputs a symbolic matrix of
             probabilities for each sample of the batch to belong to each class.
 
@@ -283,7 +291,7 @@ class CNN:
 
         # Then accumulate the FC layer forward passes.
         for fc_layer in self.fc_layers:
-            fpass = fc_layer.forward_pass(fpass)
+            fpass = fc_layer.forward_pass(fpass, test=test)
 
         # Finally, apply the final softmax layer.
         fpass = self.softmax_layer.forward_pass(fpass)
@@ -318,9 +326,9 @@ class CNN:
         params_norm = T.sqrt(params_norm)
 
         cost = - T.mean(
-            T.log(self.forward_pass(batch)[T.arange(batch.shape[0]),
-                                           labels])
-        ) + self.l2_reg * params_norm / 2
+            T.log(self.forward_pass(batch, test=False)[T.arange(batch.shape[0]),
+                                                       labels])
+        ) #+ self.l2_reg * params_norm / 2
 
         return cost
 
@@ -348,6 +356,41 @@ class Layer:
     def output_shape(self, sample_shape):
         """ Returns the shape of the output of the forward pass on a single sample.
         """
+        raise NotImplementedError()
+
+class DropoutLayer(Layer):
+    """ Dropout layer. Randomly sets inputs to 0.
+    """
+    def __init__(self, drop_proba, srng, input_shape):
+        """ Initializes the dropout layer with a given dropout probability and a shared
+            random number generator.
+        """
+        self.drop_proba = drop_proba
+        self.srng = srng
+        self.input_shape = input_shape
+
+    def forward_pass(self, input_tensor, test=False):
+        # At test time, no dropout, but multiplying weights with the dropout
+        # probability. Note that with ReLU non-linearity, one can simply multiply
+        # the outputs.
+        if test:
+            return (1. - self.drop_proba) * input_tensor
+        else:
+            # Generate a mask of ones and zeros of the shape of the input tensor.
+            mask = self.srng.binomial(
+                size=input_tensor.shape,
+                n=1,
+                p=1. - self.drop_proba,
+                nstreams=np.prod(self.input_shape),
+            )
+        
+            return input_tensor * T.cast(mask, theano.config.floatX)
+
+    def parameters(self):
+        return []
+
+    def output_shape(self, input_shape):
+        return input_shape
     
 class SoftmaxLayer(Layer):
     """ Softmax layer. Essentially multinomial logistic regression.
@@ -400,7 +443,7 @@ class FCLayer(Layer):
         self.weights = theano.shared(init_weights)
         self.biases = theano.shared(init_biases)
 
-    def forward_pass(self, input_matrix):
+    def forward_pass(self, input_matrix, test=False):
         return T.maximum(T.dot(input_matrix, self.weights) + self.biases, 0)
 
     def parameters(self):

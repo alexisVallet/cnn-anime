@@ -4,6 +4,7 @@ import unittest
 import theano
 import numpy as np
 import cv2
+from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
 from cnn_classifier import CNNClassifier
 from dataset import load_mnist, ListDataset
@@ -50,22 +51,25 @@ class TestMNIST(unittest.TestCase):
         batch_size = 32
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 8, 5, 5, 1, 1),
-                ('max-pool', 2),
                 ('conv', 16, 5, 5, 1, 1),
                 ('max-pool', 2),
+                ('conv', 32, 5, 5, 1, 1),
+                ('max-pool', 2),
                 ('conv', 128, 3, 3, 1, 1),
-                ('fc', 512),
+                ('max-pool', 2),
+                ('fc', 1024),
+                ('dropout', 0.5),
                 ('softmax', 10)
             ],
             optimizer=SGD(
                 batch_size=batch_size,
                 init_rate=0.001,
-                nb_epochs=10,
-                learning_schedule=('decay', 0.1, 5),
+                nb_epochs=20,
+                learning_schedule=('decay', 0.9, 5),
                 update_rule=('momentum', 0.9),
                 verbose=1
             ),
+            srng=RandomStreams(seed=156736127),
             l2_reg=10E-3,
             input_shape=[1,28,28],
             init='random',
