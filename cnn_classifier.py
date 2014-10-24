@@ -328,7 +328,8 @@ class CNN:
         cost = - T.mean(
             T.log(self.forward_pass(batch, test=False)[T.arange(batch.shape[0]),
                                                        labels])
-        ) #+ self.l2_reg * params_norm / 2
+        ) + (self.l2_reg * params_norm / 2 if self.l2_reg != 0 else 0)
+        # The if else here is to avoid NaN issues in some architectures.
 
         return cost
 
