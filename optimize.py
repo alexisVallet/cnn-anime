@@ -27,17 +27,19 @@ class SGD:
             learning_schedule
                 rule to update the learning rate. Can be:
                 - 'constant' for constant learning rate fixed to the initial rate.
-                - ('decay', decay_factor) for 
+                - ('decay', decay_factor, patience) for 
                   learning rate decaying when validation error does not decrease 
-                  after an epoch.
+                  after patience epochs.
             update_rule
                 rule to update the parameters. Can be:
                 - 'simple' for simply w(t) = w(t-1) - alpha * grad(t)
                 - ('momentum', mtm) for the momentum method:
                   w(t) = w(t-1) - alpha * dw(t)
                   dw(t) = mtm * dw(t-1) + grad(t)
-                - ('rprop', inc_rate, dec_rate) for the rprop method,
-                  should be used with large mini-batches only.
+                - ('rmsprop', msqr_fact) for the rmsprop method:
+                  w(t) = w(-1) - alpha * grad(w, t) / sqrt(msqr(w, t))
+                  msqr(w, 0) = 1.
+                  msqr(w, t) = msqr_fact * msqr(w, t-1) + (1 - msqr_fact) * grad(w, t)^2
             accuracy_measure
                 measure of accuracy to use on the validation set:
                 - 'sample' for the regular, number of samples gotten right
@@ -115,6 +117,33 @@ class SGD:
                 updates += [
                     (parameters[i], parameters[i] - cur_update),
                     (prev_updates[i], cur_update)
+                ]
+        elif self.update_rule[0] == 'rmsprop':
+            msqr_fact, max_rate = self.update_rule[1:]
+            min_norm = self.init_rate / max_rate
+
+            # Keep track of a mean squared magnitude of gradient for each weight.
+            msqr = []
+            
+            for param in parameters:
+                param_shape = param.get_value().shape
+                msqr.append(theano.shared(
+                    np.ones(param_shape, theano.config.floatX)
+                ))
+            # Update the weights, dividing by the mean magnitude.
+            for i in range(len(parameters)):
+                grad = T.grad(cost, parameters[i])
+                new_msqr = msqr_fact * msqr[i] + (1 - msqr_fact) * grad * grad
+                # We require a minimum norm because:
+                # - It effectively bounds the learning_rate, which is beneficial for
+                #   the same reasons as in RPROP.
+                # - It avoids numerics issues when the mean squared norm becomes too
+                #   small.
+                clip_mnorm = T.maximum(T.sqrt(new_msqr), min_norm)
+                updates += [
+                    (parameters[i], parameters[i]
+                     - self.init_rate * grad * (1. / clip_mnorm)),
+                     (msqr[i], new_msqr)
                 ]
         else:
             raise ValueError("Invalid update rule!")

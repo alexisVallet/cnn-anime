@@ -51,9 +51,9 @@ class TestPixiv(unittest.TestCase):
             optimizer=SGD(
                 batch_size=batch_size,
                 init_rate=0.001,
-                nb_epochs=1,
+                nb_epochs=3,
                 learning_schedule=('decay', 0.9, 10),
-                update_rule=('momentum', 0.9),
+                update_rule=('rmsprop', 0.9, 0.01),
                 verbose=2
             ),
             srng=RandomStreams(seed=156736127),
@@ -69,7 +69,7 @@ class TestPixiv(unittest.TestCase):
         print "Training..."
         classifier.train_named(self.train_data, self.valid_data)
         print "Predicting..."
-        print classifier.mlabel_accuracy_named(self.testdata, batch_size)
+        print classifier.mlabel_accuracy_named(self.test_data, batch_size)
 
 if __name__ == "__main__":
     unittest.main()

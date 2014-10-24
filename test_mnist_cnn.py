@@ -57,20 +57,19 @@ class TestMNIST(unittest.TestCase):
                 ('max-pool', 2),
                 ('conv', 128, 3, 3, 1, 1),
                 ('max-pool', 2),
-                ('fc', 1024),
-                ('dropout', 0.5),
+                ('fc', 512),
                 ('softmax', 10)
             ],
             optimizer=SGD(
                 batch_size=batch_size,
                 init_rate=0.001,
-                nb_epochs=20,
+                nb_epochs=10,
                 learning_schedule=('decay', 0.9, 5),
-                update_rule=('momentum', 0.9),
+                update_rule=('rmsprop', 0.9, 0.01),
                 verbose=1
             ),
             srng=RandomStreams(seed=156736127),
-            l2_reg=10E-3,
+            l2_reg=0.,
             input_shape=[1,28,28],
             init='random',
             preprocessing=[
