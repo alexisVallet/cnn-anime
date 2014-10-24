@@ -5,6 +5,8 @@ import os, struct
 from array import array
 import cPickle as pickle
 
+from jpeg_decode import jpeg_decode
+
 def mini_batch_split(samples, batch_size):
     """ Splits a dataset into roughly equal sized batches of roughly a
         given size.
@@ -36,31 +38,6 @@ def mini_batch_split(samples, batch_size):
         0, len(samples), 
         num=nb_batches+1)
     ).astype(np.int32)
-
-def load_pixiv_1M(images_folder, set_pkl):
-    """ Loads a dataset in the pixiv-1M format as a LazyIO dataset with multi-labels.
-
-    Arguments:
-        images_folder
-            folder where all the images are actually contained.
-        set_pkl
-            pickle file specifying the actual set (e.g. test, training, validation).
-    Returns:
-        A LazyIO dataset of images with multilabels. As the dataset is typically much
-        too large to fit in memory, the images are not actually loaded here and everything is
-        done on the fly.
-    """
-    fname_to_labels = None
-    with open(set_pkl, 'rb') as dataset_file:
-        fname_to_labels = pickle.load(dataset_file)
-    filenames = []
-    labels = []
-
-    for fname in fname_to_labels:
-        filenames.append(fname)
-        labels.append(frozenset(fname_to_labels[fname]))
-    
-    return LazyIO(images_folder, filenames, labels)
 
 def load_mnist(img_fname, lbl_fname):
     """ Load the MNIST dataset in a list dataset from a pickled file.
@@ -228,3 +205,69 @@ class BaseLazyIO(Dataset):
 
 class LazyIO(BaseLazyIO, DatasetMixin):
     pass
+
+class BaseCompressedDataset(Dataset):
+    """ Datasets which loads the raw jpeg data in memory and uncompresses it on the fly.
+        Useful for datasets which fit in memory when compressed.
+    """
+    def __init__(self, folder, filenames, labels):
+        assert len(filenames) > 0
+        # Load the raw jpeg data.
+        self.jpeg_imgs = []
+        for fname in filenames:
+            with open(os.path.join(folder, fname), 'rb') as img_raw:
+                self.jpeg_imgs.append(
+                    np.fromfile(img_raw, np.uint8)
+                )
+        self.labels = labels
+        self.permutation = np.array(range(len(filenames)))
+        self.sample_shape = None
+
+    def __iter__(self):
+        for i in range(len(self)):
+            bgr_image = jpeg_decode(self.jpeg_imgs[self.permutation[i]])
+                
+            yield bgr_image.astype(theano.config.floatX) / 255
+
+    def __len__(self):
+        return self.permutation.size
+
+    def shuffle(self, permutation):
+        self.permutation = permutation
+
+    def get_labels(self):
+        # Apply the permutation to the labels.
+        permut_labels = []
+
+        for i in range(self.permutation.size):
+            permut_labels.append(self.labels[self.permutation[i]])
+        
+        return permut_labels
+
+class CompressedDataset(BaseCompressedDataset, DatasetMixin):
+    pass
+
+def load_pixiv_1M(images_folder, set_pkl, dataset_class=LazyIO):
+    """ Loads a dataset in the pixiv-1M format as a LazyIO dataset with multi-labels.
+
+    Arguments:
+        images_folder
+            folder where all the images are actually contained.
+        set_pkl
+            pickle file specifying the actual set (e.g. test, training, validation).
+    Returns:
+        A LazyIO dataset of images with multilabels. As the dataset is typically much
+        too large to fit in memory, the images are not actually loaded here and everything is
+        done on the fly.
+    """
+    fname_to_labels = None
+    with open(set_pkl, 'rb') as dataset_file:
+        fname_to_labels = pickle.load(dataset_file)
+    filenames = []
+    labels = []
+
+    for fname in fname_to_labels:
+        filenames.append(fname)
+        labels.append(frozenset(fname_to_labels[fname]))
+    
+    return dataset_class(images_folder, filenames, labels)

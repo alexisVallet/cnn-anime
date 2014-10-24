@@ -6,7 +6,7 @@ import numpy as np
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
 from cnn_classifier import CNNClassifier
-from dataset import load_pixiv_1M
+from dataset import load_pixiv_1M, CompressedDataset
 from preprocessing import MeanSubtraction, SingleLabelConversion, NameLabels, FixedPatches
 from optimize import SGD
 
@@ -16,15 +16,18 @@ class TestPixiv(unittest.TestCase):
         print "Loading data..."
         cls.train_data = load_pixiv_1M(
             'data/pixiv-1M/images',
-            'data/pixiv-1M/train.pkl'
+            'data/pixiv-1M/small_train.pkl',
+            CompressedDataset
         )
         cls.valid_data = load_pixiv_1M(
             'data/pixiv-1M/images',
-            'data/pixiv-1M/valid.pkl'
+            'data/pixiv-1M/small_valid.pkl',
+            CompressedDataset
         )
         cls.test_data = load_pixiv_1M(
             'data/pixiv-1M/images',
-            'data/pixiv-1M/test.pkl'
+            'data/pixiv-1M/small_test.pkl',
+            CompressedDataset
         )
 
     def test_pixiv(self):
@@ -48,7 +51,7 @@ class TestPixiv(unittest.TestCase):
             optimizer=SGD(
                 batch_size=batch_size,
                 init_rate=0.001,
-                nb_epochs=10,
+                nb_epochs=1,
                 learning_schedule=('decay', 0.9, 10),
                 update_rule=('momentum', 0.9),
                 verbose=2

@@ -10,14 +10,17 @@ from random import shuffle
 import cv2
 
 if __name__ == "__main__":
-    # Use the same numbers for validation and test as ilsvrc 2014 classification.
-    test_size = 150000
-    valid_size = 50000
+    # Take as arguments size of training, validation and test dataset.
+    if len(sys.argv) < 6:
+        raise ValueError("Please input a filename for labels, sizes for training, validation and test datasets, and a name for the dataset.")
+    labels_dict_fname = sys.argv[1]
+    train_size = int(sys.argv[2])
+    valid_size = int(sys.argv[3])
+    test_size = int(sys.argv[4])
+    total_size = train_size + valid_size + test_size
+    dataset_name = sys.argv[5]
     # Takes as input the filename/labels dict. Generates 3 pickled
     # python dictionaries from filename to set of labels.
-    if len(sys.argv) < 2:
-        raise ValueError("Please give an input filename/labels dict.")
-    labels_dict_fname = sys.argv[1]
 
     assert os.path.isfile(labels_dict_fname)
 
@@ -28,26 +31,35 @@ if __name__ == "__main__":
 
     fname_labels = labels_dict.values()
     # Remove corrupt images from the bunch.
-    fname_labels = map(lambda fandl: (os.path.basename(fandl[0]), fandl[1]), fname_labels)
-    fname_labels = filter(lambda fandl: cv2.imread('images/' + fandl[0]) != None, fname_labels)
-    print repr(len(fname_labels)) + " non-corrupt files."
     shuffle(fname_labels)
+    fname_labels = map(lambda fandl: (os.path.basename(fandl[0]), fandl[1]), fname_labels)
+    non_corrupt = []
+    i = 0
+    
+    while len(non_corrupt) < total_size:
+        image = cv2.imread('images/' + fname_labels[i][0])
+        if image != None:
+            non_corrupt.append(fname_labels[i])
+        else:
+            print repr(i) + " th image is corrupt: " + repr(fname_labels[i][0])
+        i += 1
+        
     test_set = {}
     i = 0
     while i < test_size:
-        test_set[fname_labels[i][0]] = fname_labels[i][1]
+        test_set[non_corrupt[i][0]] = non_corrupt[i][1]
         i += 1
     valid_set = {}
     while i < test_size + valid_size:
-        valid_set[fname_labels[i][0]] = fname_labels[i][1]
+        valid_set[non_corrupt[i][0]] = non_corrupt[i][1]
         i += 1
     train_set = {}
-    while i < len(fname_labels):
-        train_set[fname_labels[i][0]] = fname_labels[i][1]
+    while i < test_size + valid_size + train_size:
+        train_set[non_corrupt[i][0]] = non_corrupt[i][1]
         i += 1
-    test_fname = 'test.pkl'
-    valid_fname = 'valid.pkl'
-    train_fname = 'train.pkl'
+    test_fname = dataset_name + '_test.pkl'
+    valid_fname = dataset_name + '_valid.pkl'
+    train_fname = dataset_name + '_train.pkl'
 
     with open(test_fname, 'w') as test_file:
         pickle.dump(test_set, test_file)
@@ -55,4 +67,4 @@ if __name__ == "__main__":
         pickle.dump(valid_set, valid_file)
     with open(train_fname, 'w') as train_file:
         pickle.dump(train_set, train_file)
-    
+
