@@ -179,37 +179,21 @@ def center_patch(patch_size, image):
     assert len(image.shape) == 3
     # take the center patch.
     patch = None
-    nb_channels, rows, cols = image.shape
+    rows, cols, nb_channels = image.shape
     if rows < cols:
         pad_left = (cols - rows) // 2
-        patch = image[:, :, pad_left:pad_left+rows]
+        patch = image[:, pad_left:pad_left+rows, :]
     if cols <= rows:
         pad_top = (rows - cols) // 2
-        patch =  image[:, pad_top:pad_top+cols, :]
-    # Resize to patch size. OpenCV and theano do not have compatible image shapes,
-    # so gotta switch things around.
-    cv_patch = np.empty(
-        [min(rows,cols), min(rows,cols), nb_channels],
-        theano.config.floatX
-    )
+        patch =  image[pad_top:pad_top+cols, :, :]
+    patch_resized = cv2.resize(patch, (patch_size, patch_size))
 
-    for i in range(nb_channels):
-        cv_patch[:,:,i] = patch[i,:,:]
-    cv_patch_resized = cv2.resize(cv_patch, (patch_size, patch_size))
-
-    patch_resized = np.empty(
-        [nb_channels, patch_size, patch_size],
-        theano.config.floatX
-    )
-
-    for i in range(nb_channels):
-        patch_resized[i,:,:] = cv_patch_resized[:,:,i]
-
-    return patch_resized
+    return np.rollaxis(patch_resized, 2, 0) # switch to c01
 
 class FixedPatches(DatasetTransformer):
     """ Picks a fixed, resized patch from the middle of the image. Does not actually extend
-        the dataset.
+        the dataset. Takes as inputs 01c images (as outputted by OpenCV), outputs c01 images
+        (as required by Theano).
     """
     def __init__(self, nb_channels, patch_size):
         self.nb_channels = nb_channels
