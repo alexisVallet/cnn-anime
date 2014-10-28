@@ -76,8 +76,8 @@ class SGD:
         # Similarly for the batch labels.
         batch_labels = theano.shared(
             np.empty(
-                [largest_batch_size],
-                np.int32
+                [largest_batch_size, model.nb_classes],
+                theano.config.floatX
             ),
             name='batch_labels'
         )
@@ -154,8 +154,8 @@ class SGD:
             updates=updates,
             mode=compile_mode
         )
-        predict_label = None
-        prev_acc = None
+        compute_cost = None
+        prev_err = None
         prev_dec = 0
 
         # Run the actual iterations, shuffling the dataset at each epoch.
@@ -177,16 +177,24 @@ class SGD:
                     [batch_size] + samples.sample_shape,
                     theano.config.floatX
                 )
+                new_labels = np.zeros(
+                    [batch_size, model.nb_classes],
+                    theano.config.floatX
+                )
+                cur_labels = train_labels[splits[i]:splits[i+1]]
                 
                 for j in range(batch_size):
                     new_batch[j] = samples_iterator.next()
+                    for label in cur_labels[j]:
+                        new_labels[j,label] = 1
+                    
                 prepare_end = time.clock()
                 if self.verbose == 2:
                     print "Prepared the batch in " + repr(prepare_end - prepare_start) + " seconds."
                 # Run the iteration.
                 iter_start = time.clock()
                 batch.set_value(new_batch)
-                batch_labels.set_value(train_labels[splits[i]:splits[i+1]])
+                batch_labels.set_value(new_labels)
                 cost_val = run_iteration()
                 iter_end = time.clock()
 
@@ -204,17 +212,15 @@ class SGD:
                 pass
             elif self.learning_schedule[0] == 'decay':
                 # Compute a validation error rate, decay the learning rate
-                # if it didn't decrease since last epoch.
-                decay, delay = self.learning_schedule[1:]
-                # If the validation error rate function wasn't compiled yet,
-                # do it. Use the already allocated batch shared variable to
-                # avoid consuming extra GPU memory.
-                if predict_label == None:
-                    predict_label = theano.function(
+                # if it didn't decrease since last epoch. We simply use the cost
+                # function for that.
+                if compute_cost == None:
+                    compute_cost = theano.function(
                         [],
-                        T.argmax(model.forward_pass(batch, test=True), axis=1),
+                        model.cost_function(batch, batch_labels, test=True),
                         mode=compile_mode
                     )
+                decay, delay = self.learning_schedule[1:]
                 # Compute prediction by splitting the validation set into mini-batches.
                 tofrozenset = lambda l: l if isinstance(l, frozenset) else frozenset([l])
                 valid_labels = map(tofrozenset, valid_data.get_labels())
@@ -222,26 +228,32 @@ class SGD:
                 valid_splits = mini_batch_split(valid_data, self.batch_size)
                 nb_valid_batches = valid_splits.size - 1
                 valid_iter = iter(valid_data)
+                cost = 0.
 
                 for i in range(nb_valid_batches):
                     cur_batch_size = valid_splits[i+1] - valid_splits[i]
+                    cur_labels = valid_labels[valid_splits[i]:valid_splits[i+1]]
                     valid_samples_batch = np.empty(
                         [cur_batch_size] + valid_data.sample_shape,
                         theano.config.floatX
                     )
+                    valid_labels_batch = np.zeros(
+                        [cur_batch_size, model.nb_classes],
+                        theano.config.floatX
+                    )
                     for j in range(cur_batch_size):
                         valid_samples_batch[j] = valid_iter.next()
+                        for label in cur_labels[j]:
+                            valid_labels_batch[j,label] = 1
                     batch.set_value(valid_samples_batch)
-                    predicted_labels += map(
-                        lambda i: frozenset([i]),
-                        list(predict_label())
-                    )
-                current_acc = multi_label_sample_accuracy(valid_labels, predicted_labels)
+                    batch_labels.set_value(valid_labels_batch)
+                    cost += compute_cost()
+                current_err = cost / nb_valid_batches
 
-                if current_acc != None and prev_acc >= current_acc:
+                if prev_err != None and prev_err < current_err:
                     if prev_dec == delay:
                         if self.verbose >= 1:
-                            print "Validation accuracy not increasing, decaying."
+                            print "Validation error not decreasing, decaying."
                         learning_rate.set_value(
                             np.float32(learning_rate.get_value() * decay)
                         )
@@ -250,13 +262,13 @@ class SGD:
                         prev_dec += 1
                 else:
                     prev_dec = 0
-                prev_acc = current_acc
+                prev_err = current_err
             else:
                 raise ValueError(repr(self.learning_schedule) 
                                  + " is not a valid learning schedule!")
             
             if self.verbose >= 1:
                 print "Epoch " + repr(t)
-                print "Cost: " + repr(avg_cost / nb_batches)
-                if prev_acc != None:
-                    print "Validation accuracy: " + repr(prev_acc)
+                print "Training error: " + repr(avg_cost / nb_batches)
+                if prev_err != None:
+                    print "Validation error: " + repr(prev_err)

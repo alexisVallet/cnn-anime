@@ -321,3 +321,4 @@ class NameLabels(DatasetTransformer):
 
     def test_data_transform(self, test_data):
         return self.TestNameLabelsSet(test_data, self.label_to_int)
+

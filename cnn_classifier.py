@@ -110,7 +110,7 @@ class BaseCNNClassifier:
 
         for preproc in self.preprocessing:
             pp_images = preproc.test_data_transform(pp_images)
-        
+            
         return self._predict_proba(pp_images.to_array())
 
     def predict_labels(self, images):
@@ -152,7 +152,7 @@ class BaseCNNClassifier:
                 filters = std * np.random.standard_normal(
                     [nb_filters, input_dim, nb_rows, nb_cols]
                 ).astype(theano.config.floatX)
-                biases = np.ones(
+                biases = np.zeros(
                     [1, nb_filters, 1, 1],
                     theano.config.floatX
                 )
@@ -178,7 +178,7 @@ class BaseCNNClassifier:
                 weights = std * np.random.standard_normal(
                     [nb_inputs, nb_neurons]
                 ).astype(theano.config.floatX)
-                biases = np.ones(
+                biases = np.zeros(
                     [nb_neurons],
                     theano.config.floatX
                 )
@@ -190,10 +190,9 @@ class BaseCNNClassifier:
                 # The inputs will be a flattened array of whatever came before.
                 nb_inputs = int(np.prod(current_input_shape))
                 nb_outputs = layer_arch[1]
-                weights = np.zeros(
-                    [nb_inputs, nb_outputs],
-                    theano.config.floatX
-                )
+                weights = std * np.random.standard_normal(
+                    [nb_inputs, nb_outputs]
+                ).astype(theano.config.floatX)
                 biases = np.zeros(
                     [nb_outputs],
                     theano.config.floatX
@@ -257,6 +256,7 @@ class CNN:
         self.fc_layers = fc_layers
         self.softmax_layer = softmax_layer
         self.l2_reg = l2_reg
+        self.nb_classes = softmax_layer.nb_outputs
 
     def parameters(self):
         """ Returns the parameters of the convnet, as a list of shared theano
@@ -298,22 +298,21 @@ class CNN:
 
         return fpass
     
-    def cost_function(self, batch, labels):
+    def cost_function(self, batch, labels, test=False):
         """ Returns the symbolic cost function of the convolutional neural
-            net.
+            net, using a multi-label generalization of the multinomial logistic
+            regression cost function.
 
         Arguments:
             batch
                 symbolic theano 4D tensor for a batch of images. Should have
                 shape (nb_images, nb_channels, nb_rows, nb_cols).
             labels
-                symbolic theano 1D int tensor for corresponding image labels.
-                Should have shape (nb_images,) . Labels should be in the {0, nb_classes-1}
-                set.
+                symbolic theano matrix of shape (nb_images, nb_classes) where
+                labels[i,j] = 1 if j is a label of x_i else 0.
         Returns:
             A symbolic scalar representing the cost of the function for the given
-            batch. Should be (sub) differentiable with regards to self.parameters().
-            
+            batch. Should be (sub) differentiable with regards to self.parameters().            
         """
         # The cost function basically sums the log softmaxed probabilities for the
         # correct
@@ -325,11 +324,12 @@ class CNN:
 
         params_norm = T.sqrt(params_norm)
 
-        cost = - T.mean(
-            T.log(self.forward_pass(batch, test=False)[T.arange(batch.shape[0]),
-                                                       labels])
-        ) + (self.l2_reg * params_norm / 2 if self.l2_reg != 0 else 0)
-        # The if else here is to avoid NaN issues in some architectures.
+        cost = - T.mean(T.log(
+            T.sum(
+                self.forward_pass(batch, test=test) * labels,
+                axis=1
+            )
+        )) #+ self.l2_reg * params_norm / 2
 
         return cost
 

@@ -36,33 +36,32 @@ class TestPixiv(unittest.TestCase):
         batch_size = 256
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 48, 11, 11, 4, 4),
+                ('conv', 24, 7, 7, 2, 2),
                 ('max-pool', 2),
-                ('conv', 128, 5, 5, 1, 1),
+                ('conv', 64, 5, 5, 1, 1),
                 ('max-pool', 2),
-                ('conv', 196, 3, 3, 1, 1),
-                ('conv', 196, 3, 3, 1, 1),
-                ('conv', 128, 3, 3, 1, 1),
+                ('conv', 98, 5, 5, 1, 1),
+                ('conv', 98, 5, 5, 1, 1),
+                ('conv', 64, 3, 3, 1, 1),
                 ('max-pool', 2),
-                ('fc', 2048),
-                ('fc', 2048),
+                ('fc', 512),
                 ('softmax', 100)
             ],
             optimizer=SGD(
                 batch_size=batch_size,
                 init_rate=0.001,
-                nb_epochs=3,
-                learning_schedule=('decay', 0.9, 10),
+                nb_epochs=10,
+                learning_schedule=('decay', 0.9, 300),
                 update_rule=('rmsprop', 0.9, 0.01),
                 verbose=2
             ),
             srng=RandomStreams(seed=156736127),
             l2_reg = 0,
-            input_shape=[3,256,256],
+            input_shape=[3,224,224],
             init='random',
             preprocessing=[
-                SingleLabelConversion(),
-                FixedPatches(3, 256)
+                FixedPatches(3, 224),
+                MeanSubtraction(3)
             ],
             verbose=True
         )
