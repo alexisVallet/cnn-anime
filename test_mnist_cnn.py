@@ -48,7 +48,7 @@ class TestMNIST(unittest.TestCase):
     def test_cnn_classifier(self):
         print "Initializing classifier..."
 
-        batch_size = 32
+        batch_size = 64
         classifier = CNNClassifier(
             architecture=[
                 ('conv', 16, 5, 5, 1, 1),
@@ -57,19 +57,19 @@ class TestMNIST(unittest.TestCase):
                 ('max-pool', 2),
                 ('conv', 128, 3, 3, 1, 1),
                 ('max-pool', 2),
-                ('fc', 512),
+                ('fc', 1024),
                 ('softmax', 10)
             ],
             optimizer=SGD(
                 batch_size=batch_size,
                 init_rate=0.001,
-                nb_epochs=10,
-                learning_schedule=('decay', 0.9, 5),
+                nb_epochs=20,
+                learning_schedule=('decay', 0.9, 10),
                 update_rule=('rmsprop', 0.9, 0.01),
                 verbose=1
             ),
             srng=RandomStreams(seed=156736127),
-            l2_reg=0.,
+            l2_reg=0,
             input_shape=[1,28,28],
             init='random',
             preprocessing=[
