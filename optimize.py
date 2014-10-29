@@ -3,6 +3,8 @@ import theano.tensor as T
 import numpy as np
 import time
 from collections import deque
+import matplotlib.pyplot as plt
+import cPickle as pickle
 
 from metrics import multi_label_sample_accuracy
 from dataset import mini_batch_split
@@ -147,7 +149,7 @@ class SGD:
                 ]
         else:
             raise ValueError("Invalid update rule!")
-
+        
         run_iteration = theano.function(
             [],
             cost,
@@ -157,6 +159,7 @@ class SGD:
         compute_cost = None
         prev_err = None
         prev_dec = 0
+        stats = None
 
         # Run the actual iterations, shuffling the dataset at each epoch.
         for t in range(1, self.nb_epochs + 1):
@@ -228,7 +231,7 @@ class SGD:
                 valid_splits = mini_batch_split(valid_data, self.batch_size)
                 nb_valid_batches = valid_splits.size - 1
                 valid_iter = iter(valid_data)
-                cost = 0.
+                avg_valid_cost = 0.
 
                 for i in range(nb_valid_batches):
                     cur_batch_size = valid_splits[i+1] - valid_splits[i]
@@ -247,8 +250,8 @@ class SGD:
                             valid_labels_batch[j,label] = 1
                     batch.set_value(valid_samples_batch)
                     batch_labels.set_value(valid_labels_batch)
-                    cost += compute_cost()
-                current_err = cost / nb_valid_batches
+                    avg_valid_cost += compute_cost()
+                current_err = avg_valid_cost / nb_valid_batches
 
                 if prev_err != None and prev_err < current_err:
                     if prev_dec == delay:
@@ -272,3 +275,18 @@ class SGD:
                 print "Training error: " + repr(avg_cost / nb_batches)
                 if prev_err != None:
                     print "Validation error: " + repr(prev_err)
+                if stats == None:
+                    stats = {'train_err': [], 'valid_err': []}
+                stats['train_err'].append(avg_cost / nb_batches)
+                stats['valid_err'].append(prev_err)
+                for param in parameters:
+                    if param.name not in stats:
+                        stats[param.name] = {
+                            'mean': [],
+                            'std': []
+                        }
+                    stats[param.name]['mean'].append(np.mean(param.get_value()))
+                    stats[param.name]['std'].append(np.std(param.get_value()))
+        if stats != None:
+            with open('train_log.pkl', 'w') as train_log_file:
+                pickle.dump(stats, train_log_file)

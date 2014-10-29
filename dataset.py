@@ -178,16 +178,7 @@ class BaseLazyIO(Dataset):
             bgr_image = cv2.imread(full_fname)
             if bgr_image == None:
                 raise ValueError("Unable to load " + repr(full_fname))
-            rows, cols, nb_channels = bgr_image.shape
-            bgr_image_dimshfl = np.empty(
-                [nb_channels, rows, cols],
-                theano.config.floatX
-            )
-            for j in range(nb_channels):
-                bgr_image_dimshfl[j] = bgr_image[:,:,j]
-                
-            yield bgr_image_dimshfl / 255
-
+            yield bgr_image.astype(theano.config.floatX) / 255
     def __len__(self):
         return self.permutation.size
 

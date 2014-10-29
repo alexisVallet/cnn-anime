@@ -51,21 +51,43 @@ class TestMNIST(unittest.TestCase):
         batch_size = 64
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 16, 5, 5, 1, 1),
+                ('conv', {
+                    'nb_filters': 4,
+                    'rows': 3,
+                    'cols': 3,
+                    'init_bias': 1.
+                }),
                 ('max-pool', 2),
-                ('conv', 32, 5, 5, 1, 1),
+                ('conv', {
+                    'nb_filters': 16,
+                    'rows': 3,
+                    'cols': 3,
+                    'init_bias': 1.
+                }),
                 ('max-pool', 2),
-                ('conv', 128, 3, 3, 1, 1),
-                ('max-pool', 2),
-                ('fc', 1024),
-                ('softmax', 10)
+                ('conv', {
+                    'nb_filters': 8,
+                    'rows': 1,
+                    'cols': 1,
+                    'init_bias': 1.
+                }),
+                ('conv', {
+                    'nb_filters': 128,
+                    'rows': 3,
+                    'cols': 3,
+                    'init_bias': 1.
+                }),
+                'avg-pool',
+                ('softmax', {
+                    'nb_outputs': 10
+                })
             ],
             optimizer=SGD(
                 batch_size=batch_size,
                 init_rate=0.001,
-                nb_epochs=20,
+                nb_epochs=50,
                 learning_schedule=('decay', 0.9, 10),
-                update_rule=('rmsprop', 0.9, 0.01),
+                update_rule=('momentum', 0.9),
                 verbose=1
             ),
             srng=RandomStreams(seed=156736127),
