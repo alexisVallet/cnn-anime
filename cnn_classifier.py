@@ -22,9 +22,27 @@ class BaseCNNClassifier:
         Arguments:
             architecture
                 list of tuples which should be either:
-                - ('conv', nb_filters, nb_rows, nb_cols, pool_r, pool_c)
-                - ('fc', nb_outputs)
-                - ('softmax', nb_outputs)
+                - ('conv', {
+                    nb_filters: ,
+                    rows: ,
+                    cols: ,
+                    stride_r: ,  defaults to 1
+                    stride_c: ,  defaults to 1
+                    init_std: ,  defaults to 0.01
+                    init_bias: , defaults to 0
+                  })
+                - ('max-pool', pooling_size)
+                - 'avg-pool'
+                - ('fc', {
+                    nb_units: ,
+                    init_std: , defaults to 0.01
+                    init_bias: , defaults to 0
+                  })
+                - ('softmax', {
+                    nb_outputs; ,
+                    init_std: , defaults to 0.01
+                    init_bias: , defaults to 0
+                  })
                 - ('dropout', dropout_proba)
             optimizer
                 optimization method to use for training the network. Should be
@@ -141,27 +159,53 @@ class BaseCNNClassifier:
         layers = []
         nb_conv_mp = 0
         nb_fc = 0
-        std = 0.01
         current_input_shape = self.input_shape
+        i = 0
         
         # Initialize convolutional, max-pooling and FC layers.
         for layer_arch in self.architecture:
-            if layer_arch[0] == 'conv':
+            if layer_arch == 'avg-pool':
+                layer = AveragePoolLayer()
+                current_input_shape = layer.output_shape(current_input_shape)
+                layers.append(layer)
+                nb_conv_mp += 1
+            elif layer_arch[0] == 'conv':
                 input_dim = current_input_shape[0]
-                nb_filters, nb_rows, nb_cols, pool_r, pool_c = layer_arch[1:]
-                filters = std * np.random.standard_normal(
+                p = layer_arch[1]
+                nb_filters, nb_rows, nb_cols, stride_r, stride_c, std, bias = (
+                    p['nb_filters'],
+                    p['rows'],
+                    p['cols'],
+                    p['stride_r'] if 'stride_r' in p else 1,
+                    p['stride_c'] if 'stride_c' in p else 1,
+                    p['init_std'] if 'init_std' in p else 0.01,
+                    p['init_bias'] if 'init_bias' in p else 0.
+                )
+                fan_in = nb_rows * nb_cols * input_dim
+                pool_size = None
+                if self.architecture[i+1] == 'avg-pool':
+                    pool_size = nb_rows * nb_cols
+                elif self.architecture[i+1][0] == 'max-pool':
+                    pool_size = self.architecture[i+1][1]**2
+                else:
+                    pool_size = 1
+                fan_out = float(nb_filters * nb_rows * nb_cols) / pool_size
+                filters = np.random.uniform(
+                    - np.sqrt(6 / (fan_in + fan_out)),
+                    np.sqrt(6 / (fan_in + fan_out)),
                     [nb_filters, input_dim, nb_rows, nb_cols]
                 ).astype(theano.config.floatX)
-                biases = np.zeros(
+                biases = bias * np.ones(
                     [1, nb_filters, 1, 1],
                     theano.config.floatX
                 )
-                layer = ConvLayer(filters, biases, (pool_r, pool_c))
+                layer = ConvLayer('C' + repr(nb_conv_mp), filters, biases, (stride_r, stride_c))
                 layers.append(layer)
                 nb_conv_mp += 1
                 current_input_shape = layer.output_shape(current_input_shape)
                 if self.verbose:
                     print "Output of C" + repr(nb_conv_mp) + ": " + repr(current_input_shape)
+                    print "fan_in: " + repr(fan_in) + ", fan_out: " + repr(fan_out)
             elif layer_arch[0] == 'max-pool':
                 # Max pooling layers leave the input dimension unchanged.
                 pooling_size = layer_arch[1]
@@ -174,32 +218,52 @@ class BaseCNNClassifier:
             elif layer_arch[0] == 'fc':
                 # The inputs will be a flattened array of whatever came before.
                 nb_inputs = int(np.prod(current_input_shape))
-                nb_neurons = layer_arch[1]
-                weights = std * np.random.standard_normal(
-                    [nb_inputs, nb_neurons]
+                p = layer_arch[1]
+                nb_units, std, bias = (
+                    p['nb_units'],
+                    p['init_std'] if 'init_std' in p else 0.01,
+                    p['init_bias'] if 'init_bias' in p else 0.
+                )
+                weights = np.random.uniform(
+                    -np.sqrt(6. / (nb_inputs + nb_units)),
+                    np.sqrt(6. / (nb_inputs + nb_units)),
+                    [nb_inputs, nb_units]
                 ).astype(theano.config.floatX)
-                biases = np.zeros(
-                    [nb_neurons],
+                biases = bias * np.ones(
+                    [nb_units],
                     theano.config.floatX
                 )
-                layer = FCLayer(weights, biases)
+                layer = FCLayer('F' + repr(nb_fc), weights, biases)
                 layers.append(layer)
                 nb_fc += 1
                 current_input_shape = layer.output_shape(current_input_shape)
+                if self.verbose:
+                    print "FC layer " + repr(nb_fc)
+                    print "fan in: " + repr(nb_inputs) + ", fan out: " + repr(nb_units)
             elif layer_arch[0] == 'softmax':
                 # The inputs will be a flattened array of whatever came before.
                 nb_inputs = int(np.prod(current_input_shape))
-                nb_outputs = layer_arch[1]
-                weights = std * np.random.standard_normal(
+                p = layer_arch[1]
+                nb_outputs, std, bias = (
+                    p['nb_outputs'],
+                    p['init_std'] if 'init_std' in p else 0.01,
+                    p['init_bias'] if 'init_bias' in p else 0.
+                )
+                weights = np.random.uniform(
+                    -np.sqrt(6 / (nb_inputs + nb_outputs)),
+                    np.sqrt(6 / (nb_inputs + nb_outputs)),
                     [nb_inputs, nb_outputs]
                 ).astype(theano.config.floatX)
-                biases = np.zeros(
+                biases = bias * np.ones(
                     [nb_outputs],
                     theano.config.floatX
                 )
-                layer = SoftmaxLayer(weights, biases)
+                layer = SoftmaxLayer('S', weights, biases)
                 layers.append(layer)
                 current_input_shape = layer.output_shape(current_input_shape)
+                if self.verbose:
+                    print "Softmax layer " + repr(nb_fc)
+                    print "fan in: " + repr(nb_inputs) + ", fan out: " + repr(nb_outputs)
             elif layer_arch[0] == 'dropout':
                 drop_proba = layer_arch[1]
                 layer_srng = RandomStreams(np.random.randint(0, 200000000))
@@ -212,6 +276,7 @@ class BaseCNNClassifier:
             else:
                 raise ValueError(repr(layer_arch) + 
                                  " is not a valid layer architecture.")
+            i += 1
 
         if len(layers) != nb_conv_mp + nb_fc + 1:
             raise ValueError(
@@ -249,6 +314,7 @@ class CNN:
                 initialization procedure for fully-connected layer weights.
         """
         assert np.all([isinstance(l, ConvLayer) or isinstance(l, MaxPoolLayer)
+                       or isinstance(l, AveragePoolLayer)
                        for l in conv_mp_layers])
         assert np.all([isinstance(l, FCLayer) or isinstance (l, DropoutLayer) for l in fc_layers])
         assert isinstance(softmax_layer, SoftmaxLayer)
@@ -397,11 +463,13 @@ class SoftmaxLayer(Layer):
     """ Softmax layer. Essentially multinomial logistic regression.
     """
 
-    def __init__(self, init_weights, init_biases):
+    def __init__(self, name, init_weights, init_biases):
         """ Initializes the softmax layer with a matrix of initial
             weights and a vector of initial biases.
 
         Arguments:
+            name
+                name for the layer.
             init_weights
                 matrix of nb_inputs by nb_outputs initial weights.
             init_biases
@@ -411,8 +479,8 @@ class SoftmaxLayer(Layer):
         assert len(init_biases.shape) == 1
         assert init_weights.shape[1] == init_biases.shape[0]
         self.nb_inputs, self.nb_outputs = init_weights.shape
-        self.weights = theano.shared(init_weights)
-        self.biases = theano.shared(init_biases)
+        self.weights = theano.shared(init_weights, name=name+'_W')
+        self.biases = theano.shared(init_biases, name=name+'_b')
 
     def forward_pass(self, input_matrix):
         return T.nnet.softmax(T.dot(input_matrix, self.weights) + self.biases)
@@ -427,11 +495,13 @@ class FCLayer(Layer):
     """ Fully connected layer with ReLU non-linearity.
     """
     
-    def __init__(self, init_weights, init_biases):
+    def __init__(self, name, init_weights, init_biases):
         """ Initializes the fully-connected layer with a matrix of
             initial weights and a vector of initial biases.
 
         Arguments:
+            name
+                a name for the layer.
             init_weights
                 matrix of nb_inputs by nb_outputs initial weights.
             init_biases
@@ -441,8 +511,8 @@ class FCLayer(Layer):
         assert len(init_biases.shape) == 1
         assert init_weights.shape[1] == init_biases.shape[0]
         self.nb_inputs, self.nb_outputs = init_weights.shape
-        self.weights = theano.shared(init_weights)
-        self.biases = theano.shared(init_biases)
+        self.weights = theano.shared(init_weights, name=name+'_W')
+        self.biases = theano.shared(init_biases, name=name+'_b')
 
     def forward_pass(self, input_matrix, test=False):
         return T.maximum(T.dot(input_matrix, self.weights) + self.biases, 0)
@@ -457,11 +527,13 @@ class ConvLayer(Layer):
     """ Convolutional layer with ReLU non-linearity and max-pooling.
     """
     
-    def __init__(self, init_filters, init_biases, pooling=(1,1)):
+    def __init__(self, name, init_filters, init_biases, pooling=(1,1)):
         """ Initializes a convolutional layer with a set of initial filters and 
             biases.
 
         Arguments:
+            name
+                a name for the layer.
             init_filters
                 4D numpy array of shape (nb_filters, nb_features, nb_rows, nb_cols).
             init_biases
@@ -474,8 +546,8 @@ class ConvLayer(Layer):
         assert len(init_biases.shape) == 4
         assert init_filters.shape[0] == init_biases.shape[1]
         # Store the initial filters in a shared variable.
-        self.filters = theano.shared(init_filters)
-        self.biases = theano.shared(init_biases)
+        self.filters = theano.shared(init_filters, name+'_W')
+        self.biases = theano.shared(init_biases, name+'_b')
         self.filters_shape = init_filters.shape
         self.pooling = pooling
         
@@ -540,4 +612,25 @@ class MaxPoolLayer(Layer):
             input_shape[0],
             input_shape[1] // self.pooling_size + roffset,
             input_shape[2] // self.pooling_size + coffset
+        ]
+
+class AveragePoolLayer(Layer):
+    """ Global average pooling layer.
+    """
+    def __init__(self):
+        pass
+
+    def forward_pass(self, fmaps):
+        # Computes the mean of each individual feature map, effectively making
+        # them into 1 by 1 feature maps.
+        return T.mean(fmaps, axis=[2,3], keepdims=True)
+
+    def parameters(self):
+        return []
+
+    def output_shape(self, input_shape):
+        return [
+            input_shape[0],
+            1,
+            1
         ]

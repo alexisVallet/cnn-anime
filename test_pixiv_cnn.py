@@ -6,7 +6,7 @@ import numpy as np
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
 from cnn_classifier import CNNClassifier
-from dataset import load_pixiv_1M, CompressedDataset
+from dataset import load_pixiv_1M, CompressedDataset, LazyIO
 from preprocessing import MeanSubtraction, SingleLabelConversion, NameLabels, FixedPatches
 from optimize import SGD
 
@@ -17,7 +17,7 @@ class TestPixiv(unittest.TestCase):
         cls.train_data = load_pixiv_1M(
             'data/pixiv-1M/images',
             'data/pixiv-1M/small_train.pkl',
-            CompressedDataset
+            LazyIO
         )
         cls.valid_data = load_pixiv_1M(
             'data/pixiv-1M/images',
@@ -33,24 +33,24 @@ class TestPixiv(unittest.TestCase):
     def test_pixiv(self):
         print "Initializing classifier..."
 
-        batch_size = 256
+        batch_size = 128
         classifier = CNNClassifier(
             architecture=[
-                ('conv', 24, 7, 7, 2, 2),
+                ('conv', {'nb_filters': 48, 'rows': 7, 'cols': 7, 'stride_r': 2, 'stride_c': 2}),
                 ('max-pool', 2),
-                ('conv', 64, 5, 5, 1, 1),
+                ('conv', {'nb_filters': 128, 'rows': 5, 'cols': 5, 'init_bias': 1.}),
                 ('max-pool', 2),
-                ('conv', 98, 5, 5, 1, 1),
-                ('conv', 98, 5, 5, 1, 1),
-                ('conv', 64, 3, 3, 1, 1),
+                ('conv', {'nb_filters': 192, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
+                ('conv', {'nb_filters': 192, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
+                ('conv', {'nb_filters': 128, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
                 ('max-pool', 2),
-                ('fc', 512),
-                ('softmax', 100)
+                ('fc', {'nb_units': 2048, 'init_bias': 1.}),
+                ('softmax', {'nb_outputs': 100})
             ],
             optimizer=SGD(
                 batch_size=batch_size,
-                init_rate=0.001,
-                nb_epochs=10,
+                init_rate=0.01,
+                nb_epochs=50,
                 learning_schedule=('decay', 0.9, 300),
                 update_rule=('rmsprop', 0.9, 0.01),
                 verbose=2
@@ -60,8 +60,7 @@ class TestPixiv(unittest.TestCase):
             input_shape=[3,224,224],
             init='random',
             preprocessing=[
-                FixedPatches(3, 224),
-                MeanSubtraction(3)
+                FixedPatches(3, 224)
             ],
             verbose=True
         )
