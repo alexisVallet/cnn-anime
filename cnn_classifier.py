@@ -15,7 +15,8 @@ class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
     def __init__(self, architecture, optimizer, input_shape,
-                 srng, init='random', l2_reg=0, preprocessing=[], verbose=False):
+                 srng, init='random', l2_reg=0, preprocessing=[],
+                 verbose=False):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
             initialization procedure.
@@ -75,7 +76,7 @@ class BaseCNNClassifier:
         self.named_conv = None
         self.loaded = False
 
-    def __getstate__(self):
+    def __getstate__(self):        
         return (self.architecture, self.optimizer, self.input_shape, self.srng, self.init,
                 self.l2_reg, self.preprocessing, self.verbose, self.model, self.named_conv)
 
@@ -90,9 +91,12 @@ class BaseCNNClassifier:
         if self.verbose:
             print "Compiling prediction functions..."
         test_samples = T.tensor4('test_samples')
+        mode = theano.compile.get_default_mode()
+        mode = mode.including('cudnn')
         self._predict_proba = theano.function(
             [test_samples],
-            self.model.forward_pass(test_samples)
+            self.model.forward_pass(test_samples),
+            mode=mode
         )
         
     def train(self, dataset, valid_data=None):
@@ -164,14 +168,15 @@ class BaseCNNClassifier:
                 method to use to find the labels set:
                 - top-1 just returns the one most probable label.
                 - ('thresh', t) thresholds the probabilities at t, i.e. all probabilities
-                  greater than t will be included in the labels set.
+                  greater than t will be included in the labels set. If there are no such
+                  probabilities, then default to top-1.
         """
         if method == 'top-1':
             return np.argmax(self.predict_probas(images), axis=1)
         elif method[0] == 'thresh':
             t = method[1]
             probas = self.predict_probas(images)
-            nb_samples, nb_classes = probas3.shape
+            nb_samples, nb_classes = probas.shape
             labels = []
             
             for i in range(nb_samples):
@@ -179,6 +184,8 @@ class BaseCNNClassifier:
                 for j in range(nb_classes):
                     if probas[i,j] > t:
                         labels_set.append(j)
+                if labels_set == []:
+                    labels_set.append(np.argmax(probas[i]))
                 labels.append(frozenset(labels_set))
             return labels
 
@@ -360,6 +367,27 @@ class BaseCNNClassifier:
             self.l2_reg
         )
 
+    def compute_activations(self, layer_number, test_set):
+        """ Compute the activations of the network after the layer_numberth layer of the
+            the network.
+        """
+        # Run the preprocessing pipeline.
+        pp_images = test_set
+
+        for preproc in self.preprocessing:
+            pp_images = preproc.test_data_transform(pp_images)
+        batch = pp_images.to_array()
+
+        # Compile activation function.
+        mode = theano.compile.get_default_mode()
+        mode = mode.including('cudnn')
+        activations = theano.function(
+            [],
+            self.model.compute_activations(layer_number, batch, test=True)
+        )
+
+        return activations()
+
 class CNNClassifier(BaseCNNClassifier, ClassifierMixin):
     pass
 
@@ -433,6 +461,34 @@ class CNN:
         fpass = self.softmax_layer.forward_pass(fpass)
 
         return fpass
+
+    def compute_activations(self, layer_number, batch, test=False):
+        # First accumulate the convolutional layer forward passes.
+        nb_layers = 0
+        fpass = batch
+
+        for conv_mp_layer in self.conv_mp_layers:
+            fpass = conv_mp_layer.forward_pass(fpass)
+            nb_layers += 1
+            if nb_layers >= layer_number:
+                return fpass
+
+        # Reshape the output (batch_size, nb_features, nb_rows, nb_cols)
+        # tensor into a data matrix (batch_size, nb_features * nb_rows * nb_cols)
+        # suitable to be fed to the FC layers.
+        fpass = T.flatten(fpass, outdim=2)
+
+        # Then accumulate the FC layer forward passes.
+        for fc_layer in self.fc_layers:
+            fpass = fc_layer.forward_pass(fpass, test=test)
+            nb_layers += 1
+            if nb_layers >= layer_number:
+                return fpass
+
+        # Finally, apply the final softmax layer.
+        fpass = self.softmax_layer.forward_pass(fpass)
+
+        return fpass  
     
     def cost_function(self, batch, labels, test=False):
         """ Returns the symbolic cost function of the convolutional neural
@@ -551,6 +607,7 @@ class SoftmaxLayer(Layer):
         self.nb_inputs, self.nb_outputs = init_weights.shape
         self.weights = theano.shared(init_weights, name=name+'_W')
         self.biases = theano.shared(init_biases, name=name+'_b')
+        self.name = name
 
     def forward_pass(self, input_matrix):
         return T.nnet.softmax(T.dot(input_matrix, self.weights) + self.biases)
@@ -560,6 +617,15 @@ class SoftmaxLayer(Layer):
 
     def output_shape(self, input_shape):
         return [self.nb_outputs]
+
+    def __getstate__(self):
+        return (self.nb_inputs, self.nb_outputs, self.weights.get_value(),
+                self.biases.get_value(), self.name)
+
+    def __setstate__(self, state):
+        self.nb_inputs, self.nb_outputs, weights, biases, self.name = state
+        self.weights = theano.shared(weights, name=self.name+'_W')
+        self.biases = theano.shared(biases, name=self.name+'_b')
     
 class FCLayer(Layer):
     """ Fully connected layer with ReLU non-linearity.
@@ -583,6 +649,7 @@ class FCLayer(Layer):
         self.nb_inputs, self.nb_outputs = init_weights.shape
         self.weights = theano.shared(init_weights, name=name+'_W')
         self.biases = theano.shared(init_biases, name=name+'_b')
+        self.name = name
 
     def forward_pass(self, input_matrix, test=False):
         return T.maximum(T.dot(input_matrix, self.weights) + self.biases, 0)
@@ -592,6 +659,15 @@ class FCLayer(Layer):
 
     def output_shape(self, input_shape):
         return [self.nb_outputs]
+
+    def __getstate__(self):
+        return (self.nb_inputs, self.nb_outputs, self.weights.get_value(),
+                self.biases.get_value(), self.name)
+
+    def __setstate__(self, state):
+        self.nb_inputs, self.nb_outputs, weights, biases, self.name = state
+        self.weights = theano.shared(weights, name=self.name+'_W')
+        self.biases = theano.shared(biases, name=self.name+'_b')
 
 class ConvLayer(Layer):
     """ Convolutional layer with ReLU non-linearity and max-pooling.
@@ -620,6 +696,7 @@ class ConvLayer(Layer):
         self.biases = theano.shared(init_biases, name+'_b')
         self.filters_shape = init_filters.shape
         self.pooling = pooling
+        self.name = name
         
     def forward_pass(self, fmaps):
         # Computes the raw convolution output, depending on the desired
@@ -656,6 +733,15 @@ class ConvLayer(Layer):
             out_shape[1] // self.pooling[1] + coffset
         ]
 
+    def __getstate__(self):
+        return (self.filters.get_value(), self.biases.get_value(), self.filters_shape,
+                self.pooling, self.name)
+
+    def __setstate__(self, state):
+        filters, biases, self.filters_shape, self.pooling, self.name = state
+        self.filters = theano.shared(filters, self.name+'_W')
+        self.biases = theano.shared(biases, self.name+'_b')
+    
 class MaxPoolLayer(Layer):
     """ Non-overlapping max pooling layer.
     """
