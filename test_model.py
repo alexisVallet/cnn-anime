@@ -29,7 +29,7 @@ if __name__ == "__main__":
         50,
         metrics=[hamming_score, multi_label_recall, multi_label_precision, unscaled_accuracy,
                  unscaled_recall, unscaled_precision],
-        method=('top-1')
+        method=('thresh', 0.2)
     )
     print "Accuracy: " + repr(accuracy)
     print "Recall: " + repr(recall)
