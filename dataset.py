@@ -2,8 +2,10 @@ import cv2
 import theano
 import numpy as np
 import os, struct
+import os.path
 from array import array
 import cPickle as pickle
+import json
 
 from jpeg_decode import jpeg_decode
 
@@ -124,7 +126,7 @@ class DatasetMixin:
             i += 1
         return samples_array
 
-class BaseListDataset(Dataset):
+class BaseIdentityDataset(Dataset):
     """ A very simple dataset implemented as a list of samples.
     """
     def __init__(self, samples, labels):
@@ -140,6 +142,39 @@ class BaseListDataset(Dataset):
     def __iter__(self):
         for i in range(self.permutation.size):
             yield self.samples[self.permutation[i]]
+
+    def __len__(self):
+        return self.permutation.size
+
+    def get_labels(self):
+        # Apply the permutation to the labels.
+        permut_labels = []
+
+        for i in range(self.permutation.size):
+            permut_labels.append(self.labels[self.permutation[i]])
+        
+        return permut_labels
+
+class IdentityDataset(BaseIdentityDataset, DatasetMixin):
+    pass
+    
+class BaseListDataset(Dataset):
+    """ A very simple dataset implemented as a list of samples.
+    """
+    def __init__(self, samples, labels):
+        assert len(samples) > 0
+        self.samples = samples
+        self.labels = labels
+        self.sample_shape = list(self.samples[0].shape)
+        self.permutation = np.array(range(len(samples)))
+
+    def shuffle(self, permutation):
+        self.permutation = permutation
+
+    def __iter__(self):
+        for i in range(self.permutation.size):
+            cv_img = self.samples[self.permutation[i]]
+            yield np.rollaxis(cv_img.astype(theano.config.floatX), 2, 0) / 255
 
     def __len__(self):
         return self.permutation.size
@@ -178,7 +213,8 @@ class BaseLazyIO(Dataset):
             bgr_image = cv2.imread(full_fname)
             if bgr_image == None:
                 raise ValueError("Unable to load " + repr(full_fname))
-            yield bgr_image.astype(theano.config.floatX) / 255
+            yield np.rollaxis(bgr_image.astype(theano.config.floatX), 2, 0) / 255
+
     def __len__(self):
         return self.permutation.size
 
@@ -216,9 +252,9 @@ class BaseCompressedDataset(Dataset):
 
     def __iter__(self):
         for i in range(len(self)):
-            bgr_image = jpeg_decode(self.jpeg_imgs[self.permutation[i]])
+            bgr_image = cv2.imdecode(self.jpeg_imgs[self.permutation[i]], 1)
                 
-            yield bgr_image.astype(theano.config.floatX) / 255
+            yield np.rollaxis(bgr_image.astype(theano.config.floatX), 2, 0) / 255
 
     def __len__(self):
         return self.permutation.size
@@ -262,3 +298,94 @@ def load_pixiv_1M(images_folder, set_pkl, dataset_class=LazyIO):
         labels.append(frozenset(fname_to_labels[fname]))
     
     return dataset_class(images_folder, filenames, labels)
+
+def load_da_180(images_folder):
+    names = [
+        'amuro',
+        'asuka',
+        'char',
+        'chirno',
+        'conan',
+        'jigen',
+        'kouji',
+        'lupin',
+        'majin',
+        'miku',
+        'ray',
+        'rufy'
+    ]
+    nb_img_cls = 15
+    a_code = ord('a')
+    images = []
+    labels = []
+    
+    for name in names:
+        for i in range(nb_img_cls):
+            fname = os.path.join(
+                images_folder,
+                name + '_' + chr(a_code + i) + '.png'
+            )
+            a_image = cv2.imread(fname)
+            maskname = os.path.join(
+                images_folder,
+                name + '_' + chr(a_code + i) + '.png-mask.png'
+            )
+            alpha_mask = 1 - (cv2.imread(maskname, cv2.CV_LOAD_IMAGE_GRAYSCALE).astype(np.float32) / 255)
+            rows, cols = a_image.shape[0:2]
+            img = (alpha_mask.reshape([rows, cols, 1]) * a_image[:,:,0:3]).astype(np.uint8)
+            images.append(img)
+            labels.append(frozenset([name]))
+    return (images, labels)
+
+def load_da_1000(images_folder, bb_folder=None):
+    labels = [
+        'asahina_mikuru',
+        'asuka_langley',
+        'faye_valentine',
+        'ginko',
+        'kaiji',
+        'lain',
+        'maya_fey',
+        'miku_hatsune',
+        'monkey_d_luffy',
+        'motoko_kusanagi',
+        'naoto_shirogane',
+        'phoenix_wright',
+        'radical_edward',
+        'rei_ayanami',
+        'roronoa_zoro',
+        'sakura_haruno',
+        'shigeru_akagi',
+        'suzumiya_haruhi',
+        'uzumaki_naruto',
+        'yu_narukami'
+    ]
+    nb_folds = 5
+    nb_img_cls = 50
+    folds_path = os.path.join(images_folder, '5-fold')
+    folds_img = []
+    folds_lbl = []
+
+    for i in range(5):
+        fold_images = []
+        fold_labels = []
+        for label in labels:
+            for j in range(nb_img_cls):
+                fname = os.path.join(
+                    folds_path,
+                    repr(i),
+                    'positives',
+                    label + '_' + repr(j) + '.jpg'
+                )
+                if os.path.isfile(fname):
+                    image = cv2.imread(fname)
+                    if bb_folder != None:
+                        with open(os.path.join(bb_folder, label + '_' + repr(j) + '_bb.json')) as bbfile:
+                            bbox = json.load(bbfile)
+                            [[x1, y1], [x2, y2]] = bbox[0]
+                            image = image[y1:y2,x1:x2]
+                    fold_images.append(image)
+                    fold_labels.append(frozenset([label]))
+        folds_img.append(fold_images)
+        folds_lbl.append(fold_labels)
+    return (folds_img, folds_lbl)

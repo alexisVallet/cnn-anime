@@ -6,14 +6,14 @@ from collections import deque
 import matplotlib.pyplot as plt
 import cPickle as pickle
 
-from metrics import multi_label_sample_accuracy
 from dataset import mini_batch_split
 
 class SGD:
     """ Implementation of stochastic gradient descent.
     """
     def __init__(self, batch_size, init_rate, nb_epochs, learning_schedule='fixed',
-                 update_rule='simple', accuracy_measure='sample', verbose=0):
+                 update_rule='simple', accuracy_measure='sample', pickle_schedule=None,
+                 verbose=0):
         """ Initialized the optimization method.
         
         Arguments:
@@ -46,6 +46,9 @@ class SGD:
                 measure of accuracy to use on the validation set:
                 - 'sample' for the regular, number of samples gotten right
                   measure.
+            pickle_schedule
+                None for no model pickling, or a (n, name) so that every n epochs the model
+                gets pickled to name_e.pkl where e is the current epoch number.
             verbose
                 verbosity level: 0 for no messages, 1 for messages every epoch, 2
                 for messages every iteration.
@@ -56,9 +59,11 @@ class SGD:
         self.learning_schedule = learning_schedule
         self.update_rule = update_rule
         self.accuracy_measure = accuracy_measure
+        self.pickle_schedule = pickle_schedule
         self.verbose = verbose
 
-    def optimize(self, model, samples, valid_data, compile_mode=None):
+    def optimize(self, classifier, samples, valid_data=None, compile_mode=None):
+        model = classifier.model
         splits = mini_batch_split(samples, self.batch_size)
         nb_batches = splits.size - 1
         # Store mini-batches into a shared variable. Since theano shared variables
@@ -160,6 +165,7 @@ class SGD:
         prev_err = None
         prev_dec = 0
         stats = None
+        since_last_pickle = 1
 
         # Run the actual iterations, shuffling the dataset at each epoch.
         for t in range(1, self.nb_epochs + 1):
@@ -187,7 +193,8 @@ class SGD:
                 cur_labels = train_labels[splits[i]:splits[i+1]]
                 
                 for j in range(batch_size):
-                    new_batch[j] = samples_iterator.next()
+                    new_sample = samples_iterator.next()
+                    new_batch[j] = new_sample
                     for label in cur_labels[j]:
                         new_labels[j,label] = 1
                     
@@ -269,7 +276,7 @@ class SGD:
             else:
                 raise ValueError(repr(self.learning_schedule) 
                                  + " is not a valid learning schedule!")
-            
+            # Epoch end info messages.
             if self.verbose >= 1:
                 print "Epoch " + repr(t)
                 print "Training error: " + repr(avg_cost / nb_batches)
@@ -287,6 +294,22 @@ class SGD:
                         }
                     stats[param.name]['mean'].append(np.mean(param.get_value()))
                     stats[param.name]['std'].append(np.std(param.get_value()))
-        if stats != None:
-            with open('train_log.pkl', 'w') as train_log_file:
-                pickle.dump(stats, train_log_file)
+                        # Pickle the model according to the schedule.
+            if self.pickle_schedule != None:
+                period, name = self.pickle_schedule
+                if since_last_pickle >= period:
+                    if self.verbose >= 1:
+                        print "Pickling current model..."
+                    with open(name + repr(t) + '.pkl', 'wb') as outfile:
+                        pickle.dump(
+                            classifier,
+                            outfile,
+                            protocol=pickle.HIGHEST_PROTOCOL
+                        )
+                    if stats != None:
+                        with open(name + "_log_" + repr(t) + '.pkl', 'wb') as outfile:
+                            pickle.dump(stats, outfile, protocol=pickle.HIGHEST_PROTOCOL)
+                    since_last_pickle = 1
+                else:
+                    since_last_pickle += 1
+
