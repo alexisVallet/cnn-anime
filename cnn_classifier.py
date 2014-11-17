@@ -7,14 +7,15 @@ from theano.sandbox.cuda.dnn import dnn_conv
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 import numpy as np
 from sklearn.cluster import KMeans
+import copy
 
 from classifier import ClassifierMixin
 
 class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
-    def __init__(self, architecture, optimizer, input_shape, srng, init='random',
-                 l2_reg=0, preprocessing=[], verbose=False):
+    def __init__(self, architecture, optimizer, input_shape,
+                 srng, init='random', l2_reg=0, preprocessing=[], verbose=False):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
             initialization procedure.
@@ -44,6 +45,7 @@ class BaseCNNClassifier:
                     init_bias: , defaults to 0
                   })
                 - ('dropout', dropout_proba)
+                - Pre-trained layers, as instances of the Layer class.
             optimizer
                 optimization method to use for training the network. Should be
                 an instance of Optimizer.
@@ -69,31 +71,43 @@ class BaseCNNClassifier:
         self.l2_reg = l2_reg
         self.preprocessing = preprocessing
         self.verbose = verbose
+        self.model = None
+        self.named_conv = None
+        self.loaded = False
 
-    def train(self, dataset, valid_data):
-        # Use theano's FFT convolutions.
-        # Initialize the CNN with the desired method.
-        if self.verbose:
-            print "Initializing weights..."
-        cnn = None
-        if self.init == 'random':
-            cnn = self.init_random()
-        else:
-            raise ValueError(repr(self.init) + 
-                             " is not a valid initialization method.")
+    def __getstate__(self):
+        return (self.architecture, self.optimizer, self.input_shape, self.srng, self.init,
+                self.l2_reg, self.preprocessing, self.verbose, self.model, self.named_conv)
+
+    def __setstate__(self, state):
+        (self.architecture, self.optimizer, self.input_shape, self.srng, self.init,
+         self.l2_reg, self.preprocessing, self.verbose, self.model, self.named_conv) = state
+        self.compile_prediction()
+        self.loaded = True
+    
+    def compile_prediction(self):
         # Compile the CNN prediction functions.
         if self.verbose:
             print "Compiling prediction functions..."
         test_samples = T.tensor4('test_samples')
         self._predict_proba = theano.function(
             [test_samples],
-            cnn.forward_pass(test_samples)
+            self.model.forward_pass(test_samples)
         )
-        self._predict_labels = theano.function(
-            [test_samples],
-            T.argmax(cnn.forward_pass(test_samples), axis=1)
-        )
-
+        
+    def train(self, dataset, valid_data=None):
+        # Use theano's FFT convolutions.
+        # Initialize the CNN with the desired method.
+        if self.verbose:
+            print "Initializing weights..."
+        # If loaded from a file, use the already initialized weights.
+        if not self.loaded:
+            if self.init == 'random':
+                self.model = self.init_random()
+            else:
+                raise ValueError(repr(self.init) + 
+                                " is not a valid initialization method.")
+        self.compile_prediction()
         # Run the preprocessing pipeline.
         if self.verbose:
             print "Preprocessing..."
@@ -104,7 +118,8 @@ class BaseCNNClassifier:
             if self.verbose:
                 print "Preprocessing step " + repr(preproc) + "..."
             pp_dataset = preproc.train_data_transform(pp_dataset)
-            pp_valid_data = preproc.test_data_transform(pp_valid_data)
+            if valid_data != None:
+                pp_valid_data = preproc.test_data_transform(pp_valid_data)
 
         # Run the optimizer on the CNN cost function.
         if self.verbose:
@@ -116,7 +131,7 @@ class BaseCNNClassifier:
         mode = theano.compile.get_default_mode()
         mode = mode.including('cudnn')
         self.optimizer.optimize(
-            cnn,
+            self,
             pp_dataset,
             pp_valid_data,
             compile_mode=mode
@@ -128,17 +143,44 @@ class BaseCNNClassifier:
 
         for preproc in self.preprocessing:
             pp_images = preproc.test_data_transform(pp_images)
+
+        # Run prediction.
+        probas = self._predict_proba(pp_images.to_array())
+
+        # Then convert the probabilities (for instance averageing when
+        # samples were duplicated, etc).
+        for preproc in self.preprocessing[::-1]:
+            probas = preproc.proba_transform(probas)
+
+        return probas
+
+    def predict_labels(self, images, method='top-1'):
+        """ Predicts the label sets for a number of images.
+
+        Arguments:
+            images
+                list of images to predict the labels for.
+            method
+                method to use to find the labels set:
+                - top-1 just returns the one most probable label.
+                - ('thresh', t) thresholds the probabilities at t, i.e. all probabilities
+                  greater than t will be included in the labels set.
+        """
+        if method == 'top-1':
+            return np.argmax(self.predict_probas(images), axis=1)
+        elif method[0] == 'thresh':
+            t = method[1]
+            probas = self.predict_probas(images)
+            nb_samples, nb_classes = probas3.shape
+            labels = []
             
-        return self._predict_proba(pp_images.to_array())
-
-    def predict_labels(self, images):
-        # Run the preprocessing pipeline.
-        pp_images = images
-
-        for preproc in self.preprocessing:
-            pp_images = preproc.test_data_transform(pp_images)
-        
-        return self._predict_labels(pp_images.to_array())
+            for i in range(nb_samples):
+                labels_set = []
+                for j in range(nb_classes):
+                    if probas[i,j] > t:
+                        labels_set.append(j)
+                labels.append(frozenset(labels_set))
+            return labels
 
     def init_random(self):
         """ Initializes a convolutional neural network at random given an 
@@ -164,7 +206,17 @@ class BaseCNNClassifier:
         
         # Initialize convolutional, max-pooling and FC layers.
         for layer_arch in self.architecture:
-            if layer_arch == 'avg-pool':
+            # Pre-trained layers.
+            if np.any([isinstance(layer_arch, c) for c in
+                       [MaxPoolLayer, ConvLayer, AveragePoolLayer]]):
+                layers.append(layer_arch)
+                nb_conv_mp += 1
+                current_input_shape = layer_arch.output_shape(current_input_shape)
+            elif isinstance(layer_arch, Layer):
+                layers.append(layer_arch)
+                nb_fc += 1
+                current_input_shape = layer_arch.output_shape(current_input_shape)
+            elif layer_arch == 'avg-pool':
                 layer = AveragePoolLayer()
                 current_input_shape = layer.output_shape(current_input_shape)
                 layers.append(layer)
@@ -224,9 +276,22 @@ class BaseCNNClassifier:
                     p['init_std'] if 'init_std' in p else 0.01,
                     p['init_bias'] if 'init_bias' in p else 0.
                 )
+                prob_alive_in = 1.
+                prob_alive_out = 1.
+                # If dropout after, the fan out is effectively multiplied by the probability of
+                # the unit being alive in the first place. Same for the fan in.
+                if isinstance(self.architecture[i-1], DropoutLayer):
+                    prob_alive_in = 1. - self.architecture[i-1].drop_proba
+                elif self.architecture[i-1][0] == 'dropout':
+                    prob_alive_in = 1. - self.architecture[i-1][1]
+                if isinstance(self.architecture[i+1], DropoutLayer):
+                    prob_alive_out = 1. - self.architecture[i+1].drop_proba
+                elif (isinstance(self.architecture[i+1], DropoutLayer)
+                    or self.architecture[i+1][0] == 'dropout'):
+                    prob_alive_out = 1. - self.architecture[i+1][1]
                 weights = np.random.uniform(
-                    -np.sqrt(6. / (nb_inputs + nb_units)),
-                    np.sqrt(6. / (nb_inputs + nb_units)),
+                    -np.sqrt(6. / (nb_inputs * prob_alive_in + nb_units * prob_alive_out)),
+                    np.sqrt(6. / (nb_inputs * prob_alive_in + nb_units * prob_alive_out)),
                     [nb_inputs, nb_units]
                 ).astype(theano.config.floatX)
                 biases = bias * np.ones(
@@ -239,7 +304,7 @@ class BaseCNNClassifier:
                 current_input_shape = layer.output_shape(current_input_shape)
                 if self.verbose:
                     print "FC layer " + repr(nb_fc)
-                    print "fan in: " + repr(nb_inputs) + ", fan out: " + repr(nb_units)
+                    print "fan in: " + repr(nb_inputs * prob_alive_in) + ", fan out: " + repr(nb_units * prob_alive_out)
             elif layer_arch[0] == 'softmax':
                 # The inputs will be a flattened array of whatever came before.
                 nb_inputs = int(np.prod(current_input_shape))
@@ -249,8 +314,13 @@ class BaseCNNClassifier:
                     p['init_std'] if 'init_std' in p else 0.01,
                     p['init_bias'] if 'init_bias' in p else 0.
                 )
+                prob_alive_in = 1.
+                if isinstance(self.architecture[i-1], DropoutLayer):
+                    prob_alive_in = 1. - self.architecture[i-1].drop_proba
+                elif self.architecture[i-1][0] == 'dropout':
+                    prob_alive_in = 1. - self.architecture[i-1][1]
                 weights = np.random.uniform(
-                    -np.sqrt(6 / (nb_inputs + nb_outputs)),
+                    -np.sqrt(6 / (nb_inputs * prob_alive_in + nb_outputs)),
                     np.sqrt(6 / (nb_inputs + nb_outputs)),
                     [nb_inputs, nb_outputs]
                 ).astype(theano.config.floatX)
@@ -263,7 +333,7 @@ class BaseCNNClassifier:
                 current_input_shape = layer.output_shape(current_input_shape)
                 if self.verbose:
                     print "Softmax layer " + repr(nb_fc)
-                    print "fan in: " + repr(nb_inputs) + ", fan out: " + repr(nb_outputs)
+                    print "fan in: " + repr(nb_inputs * prob_alive_in) + ", fan out: " + repr(nb_outputs)
             elif layer_arch[0] == 'dropout':
                 drop_proba = layer_arch[1]
                 layer_srng = RandomStreams(np.random.randint(0, 200000000))
