@@ -1,13 +1,10 @@
 import cv2
-import theano
 import numpy as np
 import os, struct
 import os.path
 from array import array
 import cPickle as pickle
 import json
-
-from jpeg_decode import jpeg_decode
 
 def mini_batch_split(samples, batch_size):
     """ Splits a dataset into roughly equal sized batches of roughly a
@@ -76,11 +73,10 @@ def load_mnist(img_fname, lbl_fname):
     labels = []
 
     for i in range(size):
-        # Convert the image to floating point [0;1] range while we're at it.
         image = np.array(
             img[i*rows*cols:(i+1)*rows*cols],
-            theano.config.floatX
-        ).reshape([1, rows, cols]) / 255.
+            dtype=np.uint8
+        ).reshape([rows, cols, 1])
         images.append(image)
         labels.append(frozenset([str(lbl[i])]))
 
@@ -118,7 +114,7 @@ class DatasetMixin:
         """
         samples_array = np.empty(
             [len(self)] + self.sample_shape,
-            theano.config.floatX
+            np.float32
         )
         i = 0
         for sample in iter(self):
@@ -174,7 +170,7 @@ class BaseListDataset(Dataset):
     def __iter__(self):
         for i in range(self.permutation.size):
             cv_img = self.samples[self.permutation[i]]
-            yield np.rollaxis(cv_img.astype(theano.config.floatX), 2, 0) / 255
+            yield np.rollaxis(cv_img.astype(np.float32), 2, 0) / 255
 
     def __len__(self):
         return self.permutation.size
@@ -213,7 +209,7 @@ class BaseLazyIO(Dataset):
             bgr_image = cv2.imread(full_fname)
             if bgr_image == None:
                 raise ValueError("Unable to load " + repr(full_fname))
-            yield np.rollaxis(bgr_image.astype(theano.config.floatX), 2, 0) / 255
+            yield np.rollaxis(bgr_image.astype(np.float32), 2, 0) / 255
 
     def __len__(self):
         return self.permutation.size
@@ -254,7 +250,7 @@ class BaseCompressedDataset(Dataset):
         for i in range(len(self)):
             bgr_image = cv2.imdecode(self.jpeg_imgs[self.permutation[i]], 1)
                 
-            yield np.rollaxis(bgr_image.astype(theano.config.floatX), 2, 0) / 255
+            yield np.rollaxis(bgr_image.astype(np.float32), 2, 0) / 255
 
     def __len__(self):
         return self.permutation.size

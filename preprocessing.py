@@ -5,7 +5,6 @@
 from dataset import Dataset, DatasetMixin
 import cv2
 import numpy as np
-import theano
 
 class DatasetTransformer:
     """ A dataset transformer transforms datasets (duh) for both training and
@@ -56,7 +55,7 @@ class BaseTrainMeanSubtraction(Dataset):
             ).astype(np.float64).reshape([nb_channels, 1, 1])
             self.mean_pixel += image_mean / nb_samples
             
-        self.mean_pixel = self.mean_pixel.astype(theano.config.floatX)
+        self.mean_pixel = self.mean_pixel.astype(np.float32)
     
     def __iter__(self):
         # Then subtract it from each image.
@@ -351,7 +350,7 @@ class RandomPatch(DatasetTransformer):
         # Averages probas for the nb_test samples from which random patches were drawn.
         out_probas = np.empty(
             [nb_samples / self.nb_test, probas.shape[1]],
-            theano.config.floatX
+            np.float32
         )
         for i in range(nb_samples / self.nb_test):
             out_probas[i] = np.mean(probas[i*self.nb_test:(i+1)*self.nb_test], axis=0)
