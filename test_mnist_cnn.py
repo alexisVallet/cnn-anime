@@ -8,7 +8,7 @@ from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 import cPickle as pickle
 
 from cnn_classifier import CNNClassifier
-from dataset import load_mnist, ListDataset
+from dataset import load_mnist, ListDataset, IdentityDataset
 from preprocessing import MeanSubtraction, NameLabels, RandomPatch
 from optimize import SGD
 
@@ -38,8 +38,8 @@ class TestMNIST(unittest.TestCase):
             else:
                 trainsamples.append(sample)
             i += 1
-        cls.traindata = ListDataset(trainsamples, trainlabels)
-        cls.validdata = ListDataset(validsamples, validlabels)
+        cls.traindata = IdentityDataset(trainsamples, trainlabels)
+        cls.validdata = IdentityDataset(validsamples, validlabels)
         
         cls.testdata = load_mnist(
             'data/mnist/t10k-images.idx3-ubyte',
@@ -86,7 +86,7 @@ class TestMNIST(unittest.TestCase):
         print "Training..."
         classifier.train_named(self.traindata, self.validdata)
         print "Predicting..."
-        print classifier.mlabel_accuracy_named(self.testdata, batch_size)
+        print classifier.mlabel_metrics_named(self.testdata, batch_size)
         print "Saving model..."
         model_fname = 'test_mnist.pkl'
         with open(model_fname, 'wb') as outfile:
@@ -100,7 +100,7 @@ class TestMNIST(unittest.TestCase):
             loaded_classifier = pickle.load(
                 infile
             )
-            print loaded_classifier.mlabel_accuracy_named(self.testdata, batch_size)
+            print loaded_classifier.mlabel_metrics_named(self.testdata, batch_size)
 
 if __name__ == "__main__":
     unittest.main()
