@@ -1,6 +1,11 @@
+from batch_producer import batch_producer
+import multiprocessing as mp
+from multiprocessing.sharedctypes import RawValue, RawArray
 import theano
 import theano.tensor as T
 import numpy as np
+from numpy.ctypeslib import ndpointer
+import ctypes
 import time
 from collections import deque
 import matplotlib.pyplot as plt
@@ -175,36 +180,46 @@ class SGD:
             train_labels = samples.get_labels()
             last_100_costs = deque()
             avg_cost = 0.
+
+            # Initialize the shared memory stuff for the batch producer/consumer.
+            available = RawValue('B', 0)
+            shared_samples = RawArray(
+                'f',
+                np.prod([largest_batch_size] + samples.sample_shape)
+            )
+            shared_labels = RawArray(
+                'f',
+                np.prod([largest_batch_size, model.nb_classes])
+            )
+            # Convenient numpy wrappers for these two.
+            np_shared_samples = np.ctypeslib.as_array(
+                shared_samples
+            )
+            np_shared_samples.shape = [largest_batch_size] + samples.sample_shape
+            np_shared_labels = np.ctypeslib.as_array(
+                shared_labels
+            )
+            np_shared_labels.shape = [largest_batch_size, model.nb_classes]
+            condition = mp.Condition()
+            producer_process = mp.Process(
+                target=batch_producer,
+                args=(samples, splits, largest_batch_size, model.nb_classes,
+                      shared_samples, shared_labels, available, condition)
+            )
+            producer_process.start()
             
             for i in range(nb_batches):
-                if self.verbose == 2:
-                    print "Preparing batch " + repr(i+1) + " out of " + repr(nb_batches)
-                prepare_start = time.clock()
-                # Select the batch.
-                batch_size = splits[i+1] - splits[i]
-                new_batch = np.empty(
-                    [batch_size] + samples.sample_shape,
-                    theano.config.floatX
-                )
-                new_labels = np.zeros(
-                    [batch_size, model.nb_classes],
-                    theano.config.floatX
-                )
-                cur_labels = train_labels[splits[i]:splits[i+1]]
-                
-                for j in range(batch_size):
-                    new_sample = samples_iterator.next()
-                    new_batch[j] = new_sample
-                    for label in cur_labels[j]:
-                        new_labels[j,label] = 1
-                    
-                prepare_end = time.clock()
-                if self.verbose == 2:
-                    print "Prepared the batch in " + repr(prepare_end - prepare_start) + " seconds."
                 # Run the iteration.
                 iter_start = time.clock()
-                batch.set_value(new_batch)
-                batch_labels.set_value(new_labels)
+                condition.acquire()
+                while available.value != 1:
+                    condition.wait()
+                # When the batch is available, put it in the GPU.
+                batch.set_value(np_shared_samples[0:batch_size])
+                batch_labels.set_value(np_shared_labels[0:batch_size])
+                available.value = 0
+                condition.notify()
+                condition.release()
                 cost_val = run_iteration()
                 iter_end = time.clock()
 
