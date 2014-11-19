@@ -79,8 +79,8 @@ def load_mnist(img_fname, lbl_fname):
         # Convert the image to floating point [0;1] range while we're at it.
         image = np.array(
             img[i*rows*cols:(i+1)*rows*cols],
-            theano.config.floatX
-        ).reshape([1, rows, cols]) / 255.
+            np.uint8
+        ).reshape([rows, cols, 1])
         images.append(image)
         labels.append(frozenset([str(lbl[i])]))
 
