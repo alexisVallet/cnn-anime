@@ -4,6 +4,7 @@
 """
 import numpy as np
 import multiprocessing as mp
+import time
 
 def batch_producer(train_set, splits, largest_batch_size, nb_classes,
                    shared_samples, shared_labels, available, condition):

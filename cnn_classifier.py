@@ -3,7 +3,7 @@ import theano.tensor as T
 from theano.tensor.signal.downsample import max_pool_2d
 from pylearn2.sandbox.cuda_convnet.filter_acts import FilterActs
 from theano.sandbox.cuda.basic_ops import gpu_contiguous
-from theano.sandbox.cuda.dnn import dnn_conv
+from theano.sandbox.cuda.dnn import dnn_conv, dnn_pool, GpuDnnSoftmax
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 import numpy as np
 from sklearn.cluster import KMeans
@@ -31,19 +31,24 @@ class BaseCNNClassifier:
                     stride_r: ,  defaults to 1
                     stride_c: ,  defaults to 1
                     init_std: ,  defaults to 0.01
-                    init_bias: , defaults to 0
+                    init_bias:  defaults to 0
                   })
-                - ('max-pool', pooling_size)
+                - ('max-pool', {
+                    rows: ,
+                    cols: ,
+                    stride_r: ,
+                    stride_c:
+                  })
                 - 'avg-pool'
                 - ('fc', {
                     nb_units: ,
                     init_std: , defaults to 0.01
-                    init_bias: , defaults to 0
+                    init_bias:  defaults to 0
                   })
                 - ('softmax', {
                     nb_outputs; ,
                     init_std: , defaults to 0.01
-                    init_bias: , defaults to 0
+                    init_bias:  defaults to 0
                   })
                 - ('dropout', dropout_proba)
                 - Pre-trained layers, as instances of the Layer class.
@@ -91,12 +96,9 @@ class BaseCNNClassifier:
         if self.verbose:
             print "Compiling prediction functions..."
         test_samples = T.tensor4('test_samples')
-        mode = theano.compile.get_default_mode()
-        mode = mode.including('cudnn')
         self._predict_proba = theano.function(
             [test_samples],
-            self.model.forward_pass(test_samples),
-            mode=mode
+            self.model.forward_pass(test_samples)
         )
         
     def train(self, dataset, valid_data=None):
@@ -132,13 +134,10 @@ class BaseCNNClassifier:
         # graph, FFT convolutions are the only ones where we actually use nnet.conv2D,
         # so only those get compiled away. For other convolutions, we use the specific
         # ops.
-        mode = theano.compile.get_default_mode()
-        mode = mode.including('cudnn')
         self.optimizer.optimize(
             self,
             pp_dataset,
-            pp_valid_data,
-            compile_mode=mode
+            pp_valid_data
         )
 
     def predict_probas(self, images):
@@ -245,7 +244,7 @@ class BaseCNNClassifier:
                 if self.architecture[i+1] == 'avg-pool':
                     pool_size = nb_rows * nb_cols
                 elif self.architecture[i+1][0] == 'max-pool':
-                    pool_size = self.architecture[i+1][1]**2
+                    pool_size = self.architecture[i+1][1]['stride_r'] * self.architecture[i+1][1]['stride_c']
                 else:
                     pool_size = 1
                 fan_out = float(nb_filters * nb_rows * nb_cols) / pool_size
@@ -267,8 +266,13 @@ class BaseCNNClassifier:
                     print "fan_in: " + repr(fan_in) + ", fan_out: " + repr(fan_out)
             elif layer_arch[0] == 'max-pool':
                 # Max pooling layers leave the input dimension unchanged.
-                pooling_size = layer_arch[1]
-                layer = MaxPoolLayer(pooling_size)
+                rows, cols, stride_r, stride_c = (
+                    layer_arch[1]['rows'],
+                    layer_arch[1]['cols'],
+                    layer_arch[1]['stride_r'],
+                    layer_arch[1]['stride_c']
+                )
+                layer = MaxPoolLayer((rows, cols), (stride_r, stride_c))
                 layers.append(layer)
                 nb_conv_mp += 1
                 current_input_shape = layer.output_shape(current_input_shape)
@@ -724,13 +728,11 @@ class ConvLayer(Layer):
             input_shape[1] - self.filters_shape[2] + 1,
             input_shape[2] - self.filters_shape[3] + 1
         ]
-        roffset = 0 if out_shape[0] % self.pooling[0] == 0 else 1
-        coffset = 0 if out_shape[1] % self.pooling[1] == 0 else 1
-
+        
         return [
             self.filters_shape[0],
-            out_shape[0] // self.pooling[0] + roffset,
-            out_shape[1] // self.pooling[1] + coffset
+            out_shape[0] // self.pooling[0],
+            out_shape[1] // self.pooling[1]
         ]
 
     def __getstate__(self):
@@ -745,7 +747,7 @@ class ConvLayer(Layer):
 class MaxPoolLayer(Layer):
     """ Non-overlapping max pooling layer.
     """
-    def __init__(self, pooling_size):
+    def __init__(self, pooling_size, stride):
         """ Initialize a max-pooling layer with a given pooling window size.
 
         Arguments:
@@ -753,21 +755,22 @@ class MaxPoolLayer(Layer):
                 size of the max pooling window.
         """
         self.pooling_size = pooling_size
+        self.stride = stride
 
-    def forward_pass(self, fmaps):
-        return max_pool_2d(fmaps, (self.pooling_size, self.pooling_size))
+    def forward_pass(self, fmaps):        
+        return dnn_pool(fmaps, self.pooling_size, self.stride)
 
     def parameters(self):
         return []
 
     def output_shape(self, input_shape):
-        roffset = 0 if input_shape[1] % self.pooling_size == 0 else 1
-        coffset = 0 if input_shape[2] % self.pooling_size == 0 else 1
+        overlap_r = max(0, self.pooling_size[0] - self.stride[0])
+        overlap_c = max(0, self.pooling_size[1] - self.stride[1])
 
         return [
             input_shape[0],
-            input_shape[1] // self.pooling_size + roffset,
-            input_shape[2] // self.pooling_size + coffset
+            (input_shape[1] - overlap_r) // self.stride[0],
+            (input_shape[2] - overlap_c) // self.stride[1]
         ]
 
 class AveragePoolLayer(Layer):

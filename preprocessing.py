@@ -5,6 +5,8 @@
 from dataset import Dataset, DatasetMixin
 import cv2
 import numpy as np
+import os.path
+import cPickle as pickle
 
 class DatasetTransformer:
     """ A dataset transformer transforms datasets (duh) for both training and
@@ -37,25 +39,34 @@ class DatasetTransformer:
         return probas
 
 class BaseTrainMeanSubtraction(Dataset):
-    def __init__(self, nb_channels, dataset):
+    def __init__(self, nb_channels, dataset, cache_file=None):
         self.dataset = dataset
         self.sample_shape = dataset.sample_shape
-        # First accumulate the mean pixel value.
-        self.mean_pixel = np.zeros(
-            [nb_channels, 1, 1],
-            np.float64
-        )
-        nb_samples = len(self.dataset)
-        
-        for image in self.dataset:
-            new_shape = ([nb_channels, np.prod(image.shape[1:])])
-            image_mean = np.mean(
-                image.reshape(new_shape),
-                axis=1
-            ).astype(np.float64).reshape([nb_channels, 1, 1])
-            self.mean_pixel += image_mean / nb_samples
+        # First accumulate the mean pixel value if it has not
+        # been cached yet.
+        if cache_file == None or not os.path.isfile(cache_file):
+            self.mean_pixel = np.zeros(
+                [nb_channels, 1, 1],
+                np.float64
+            )
+            nb_samples = len(self.dataset)
             
-        self.mean_pixel = self.mean_pixel.astype(np.float32)
+            for image in self.dataset:
+                new_shape = ([nb_channels, np.prod(image.shape[1:])])
+                image_mean = np.mean(
+                    image.reshape(new_shape),
+                    axis=1
+                ).astype(np.float64).reshape([nb_channels, 1, 1])
+                self.mean_pixel += image_mean / nb_samples
+            
+            self.mean_pixel = self.mean_pixel.astype(np.float32)
+            # Cache the results if possible.
+            if cache_file != None:
+                with open(cache_file, 'wb') as cache:
+                    pickle.dump(self.mean_pixel, cache, protocol=pickle.HIGHEST_PROTOCOL)
+        else:
+            with open(cache_file, 'rb') as cache:
+                self.mean_pixel = pickle.load(cache)
     
     def __iter__(self):
         # Then subtract it from each image.
@@ -100,11 +111,12 @@ class TestMeanSubtraction(BaseTestMeanSubtraction, DatasetMixin):
 class MeanSubtraction(DatasetTransformer):
     """ Dataset transformer for mean pixel value subtraction.
     """
-    def __init__(self, nb_channels):
+    def __init__(self, nb_channels, cache_file=None):
         self.nb_channels = nb_channels
+        self.cache_file = cache_file
 
     def train_data_transform(self, dataset):
-        self.trainset = TrainMeanSubtraction(self.nb_channels, dataset)
+        self.trainset = TrainMeanSubtraction(self.nb_channels, dataset, self.cache_file)
 
         return self.trainset
 
