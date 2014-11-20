@@ -7,7 +7,7 @@ from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 import cPickle as pickle
 
 from cnn_classifier import CNNClassifier
-from dataset import load_pixiv_1M, CompressedDataset, LazyIO
+from dataset import load_pixiv_1M, CompressedDataset, LazyIO, ListDataset
 from preprocessing import MeanSubtraction, NameLabels, RandomPatch, Resize, RandomFlip
 from optimize import SGD
 
@@ -16,18 +16,18 @@ class TestPixiv(unittest.TestCase):
     def setUpClass(cls):
         print "Loading data..."
         cls.train_data = load_pixiv_1M(
-            '../backups/pixiv-1M',
-            'data/pixiv-1M/1M_train.pkl',
+            'data/pixiv-115/images',
+            'data/pixiv-115/raw_train.pkl',
             LazyIO
         )
         cls.valid_data = load_pixiv_1M(
-            '../backups/pixiv-1M',
-            'data/pixiv-1M/1M_valid.pkl',
+            'data/pixiv-115/images',
+            'data/pixiv-115/raw_valid.pkl',
             LazyIO
         )
         cls.test_data = load_pixiv_1M(
-            '../backups/pixiv-1M',
-            'data/pixiv-1M/1M_test.pkl',
+            'data/pixiv-115/images',
+            'data/pixiv-115/raw_test.pkl',
             LazyIO
         )
 
@@ -37,19 +37,20 @@ class TestPixiv(unittest.TestCase):
         batch_size = 128
         classifier = CNNClassifier(
             architecture=[
-                ('conv', {'nb_filters': 48, 'rows': 7, 'cols': 7, 'stride_r': 2, 'stride_c': 2}),
-                ('max-pool', 2),
-                ('conv', {'nb_filters': 128, 'rows': 5, 'cols': 5, 'init_bias': 1.}),
-                ('max-pool', 2),
-                ('conv', {'nb_filters': 192, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
-                ('conv', {'nb_filters': 192, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
+                ('conv', {'nb_filters': 96, 'rows': 7, 'cols': 7, 'stride_r': 2, 'stride_c': 2}),
+                ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2}),
+                ('conv', {'nb_filters': 256, 'rows': 5, 'cols': 5, 'init_bias': 1.,
+                          'stride_r': 2, 'stride_c': 2}),
+                ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2}),
+                ('conv', {'nb_filters': 384, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
+                ('conv', {'nb_filters': 384, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
                 ('conv', {'nb_filters': 256, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
-                ('max-pool', 2),
+                ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2}),
                 ('fc', {'nb_units': 4096, 'init_bias': 1.}),
                 ('dropout', 0.5),
                 ('fc', {'nb_units': 4096, 'init_bias': 1.}),
                 ('dropout', 0.5),
-                ('softmax', {'nb_outputs': 100})
+                ('softmax', {'nb_outputs': 115})
             ],
             optimizer=SGD(
                 batch_size=batch_size,
@@ -65,8 +66,7 @@ class TestPixiv(unittest.TestCase):
             input_shape=[3,224,224],
             init='random',
             preprocessing=[
-                Resize(256),
-#                MeanSubtraction(3),
+                MeanSubtraction(3, 'data/pixiv-115/raw_mean_pixel.pkl'),
                 RandomPatch(3, 224, 224, 10),
                 RandomFlip()
             ],
