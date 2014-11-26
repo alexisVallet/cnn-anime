@@ -43,7 +43,6 @@ class ClassifierMixin:
         test_labels = test_samples.get_labels()
 
         for i in range(nb_batches):
-            print "batch " + repr(i)
             cur_batch_size = splits[i+1] - splits[i]
             batch = []
             batch_labels = test_labels[splits[i]:splits[i+1]]

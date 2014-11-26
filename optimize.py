@@ -154,7 +154,7 @@ class SGD:
                 clip_mnorm = T.maximum(T.sqrt(new_msqr), min_norm)
                 updates += [
                     (parameters[i], parameters[i]
-                     - self.init_rate * grad * (1. / clip_mnorm)),
+                     - learning_rate * grad * (1. / clip_mnorm)),
                      (msqr[i], new_msqr)
                 ]
         else:
@@ -212,19 +212,15 @@ class SGD:
                 # Run the iteration.
                 iter_start = time.time()
                 condition.acquire()
-                print "Waiting for batch..."
                 while available.value != 1:
                     condition.wait()
-                print "Got the batch."
                 # When the batch is available, put it in the GPU.
                 batch.set_value(np_shared_samples[0:batch_size])
                 batch_labels.set_value(np_shared_labels[0:batch_size])
                 available.value = 0
                 condition.notify()
                 condition.release()
-                print "Running iteration..."
                 cost_val = run_iteration()
-                print "Finished iteration."
                 iter_end = time.time()
 
                 avg_cost += cost_val

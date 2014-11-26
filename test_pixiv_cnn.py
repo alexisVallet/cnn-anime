@@ -35,43 +35,47 @@ class TestPixiv(unittest.TestCase):
         print "Initializing classifier..."
 
         batch_size = 128
-        classifier = CNNClassifier(
-            architecture=[
-                ('conv', {'nb_filters': 96, 'rows': 7, 'cols': 7, 'stride_r': 2, 'stride_c': 2}),
-                ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2}),
-                ('conv', {'nb_filters': 256, 'rows': 5, 'cols': 5, 'init_bias': 1.,
-                          'stride_r': 2, 'stride_c': 2}),
-                ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2}),
-                ('conv', {'nb_filters': 384, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
-                ('conv', {'nb_filters': 384, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
-                ('conv', {'nb_filters': 256, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
-                ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2}),
-                ('fc', {'nb_units': 4096, 'init_bias': 1.}),
-                ('dropout', 0.5),
-                ('fc', {'nb_units': 4096, 'init_bias': 1.}),
-                ('dropout', 0.5),
-                ('softmax', {'nb_outputs': 115})
-            ],
-            optimizer=SGD(
-                batch_size=batch_size,
-                init_rate=0.01,
-                nb_epochs=50,
-                learning_schedule=('decay', 0.9, 300),
-                update_rule=('rmsprop', 0.9, 0.01),
-                pickle_schedule=(1, 'data/pixiv-1M/models/test/parallel_'),
-                verbose=2
-            ),
-            srng=RandomStreams(seed=156736127),
-            l2_reg = 0.0005,
-            input_shape=[3,224,224],
-            init='random',
-            preprocessing=[
-                MeanSubtraction(3, 'data/pixiv-115/raw_mean_pixel.pkl'),
-                RandomPatch(3, 224, 224, 10),
-                RandomFlip()
-            ],
-            verbose=True
+        # classifier = CNNClassifier(
+        #     architecture=[
+        #         ('conv', {'nb_filters': 96, 'rows': 7, 'cols': 7, 'stride_r': 2, 'stride_c': 2}),
+        #         ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2}),
+        #         ('conv', {'nb_filters': 256, 'rows': 5, 'cols': 5, 'init_bias': 1.,
+        #                   'stride_r': 2, 'stride_c': 2}),
+        #         ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2}),
+        #         ('conv', {'nb_filters': 384, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
+        #         ('conv', {'nb_filters': 384, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
+        #         ('conv', {'nb_filters': 256, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
+        #         ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2}),
+        #         ('fc', {'nb_units': 4096, 'init_bias': 1.}),
+        #         ('dropout', 0.5),
+        #         ('fc', {'nb_units': 4096, 'init_bias': 1.}),
+        #         ('dropout', 0.5),
+        #         ('softmax', {'nb_outputs': 115})
+        #     ],
+        #     optimizer=SGD(
+        #         batch_size=batch_size,
+        #         init_rate=0.01,
+        #         nb_epochs=50,
+        #         learning_schedule=('decay', 0.9, 300),
+        #         update_rule=('rmsprop', 0.9, 0.01),
+        #         pickle_schedule=(1, 'data/pixiv-1M/models/test/parallel_'),
+        #         verbose=2
+        #     ),
+        #     srng=RandomStreams(seed=156736127),
+        #     l2_reg = 0.0005,
+        #     input_shape=[3,224,224],
+        #     init='random',
+        #     preprocessing=[
+        #         MeanSubtraction(3, 'data/pixiv-115/raw_mean_pixel.pkl'),
+        #         RandomPatch(3, 224, 224, 10),
+        #         RandomFlip()
+        #     ],
+        #     verbose=True
+        # )
+        classifier = pickle.load(
+            open('data/pixiv-115/models/raw/raw_29_backup.pkl', 'rb')
         )
+        classifier.optimizer.init_rate = 0.001
         print "Training..."
         classifier.train_named(self.train_data, self.valid_data)
         print "Predicting..."

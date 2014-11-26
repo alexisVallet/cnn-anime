@@ -15,7 +15,7 @@ class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
     def __init__(self, architecture, optimizer, input_shape,
-                 srng, init='random', l2_reg=0, preprocessing=[],
+                 srng, init='random', cost='bp-mll', l2_reg=0, preprocessing=[],
                  verbose=False):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
@@ -62,6 +62,9 @@ class BaseCNNClassifier:
             init
                 initialization procedure for the network. Can be:
                 - 'random' for random initialization of network weights.
+            cost
+                cost function to use for training. One of:
+                - 'log-scaled' for log-scaled 
             l2_reg
                 parameter controlling the strength of l2 regularization.
             preprocessing
