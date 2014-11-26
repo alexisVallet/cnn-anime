@@ -24,17 +24,12 @@ if __name__ == "__main__":
         LazyIO
     )
     print "Predicting..."
-    accuracy, recall, precision, u_acc, u_rec, u_prec = classifier.mlabel_metrics_named(
+    accuracy, recall, precision = classifier.mlabel_metrics_named(
         test_data,
-        50,
-        metrics=[hamming_score, multi_label_recall, multi_label_precision, unscaled_accuracy,
-                 unscaled_recall, unscaled_precision],
+        25,
+        metrics=[hamming_score, multi_label_recall, multi_label_precision],
         method=('thresh', 0.2)
     )
     print "Accuracy: " + repr(accuracy)
     print "Recall: " + repr(recall)
     print "Precision: " + repr(precision)
-    print "Unscaled accuracy: " + repr(u_acc)
-    print "Unscaled recall: " + repr(u_rec)
-    print "Unscaled precision " + repr(u_prec)
-
