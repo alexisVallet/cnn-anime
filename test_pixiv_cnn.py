@@ -50,7 +50,7 @@ class TestPixiv(unittest.TestCase):
                 ('dropout', 0.5),
                 ('fc', {'nb_units': 4096, 'init_bias': 1.}),
                 ('dropout', 0.5),
-                ('softmax', {'nb_outputs': 115})
+                ('linear', {'nb_outputs': 115})
             ],
             optimizer=SGD(
                 batch_size=batch_size,
@@ -65,6 +65,7 @@ class TestPixiv(unittest.TestCase):
             l2_reg = 0.0005,
             input_shape=[3,224,224],
             init='random',
+            cost='mlr',
             preprocessing=[
                 MeanSubtraction(3, 'data/pixiv-115/raw_mean_pixel.pkl'),
                 RandomPatch(3, 224, 224, 10),
