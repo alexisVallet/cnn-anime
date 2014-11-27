@@ -56,14 +56,14 @@ class TestMNIST(unittest.TestCase):
         classifier = CNNClassifier(
             architecture=[
                 ('conv', {'nb_filters': 8, 'rows': 5, 'cols': 5}),
-                ('max-pool', 2),
+                ('max-pool', {'rows': 2, 'cols': 2, 'stride_r': 2, 'stride_c': 2}),
                 ('conv', {'nb_filters': 16, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
-                ('max-pool', 2),
+                ('max-pool', {'rows': 2, 'cols': 2, 'stride_r': 2, 'stride_c': 2}),
                 ('conv', {'nb_filters': 128, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
-                ('max-pool', 2),
+                ('max-pool', {'rows': 2, 'cols': 2, 'stride_r': 2, 'stride_c': 2}),
                 ('fc', {'nb_units': 2048, 'init_bias': 1.}),
                 ('dropout', 0.5),
-                ('softmax', {
+                ('linear', {
                     'nb_outputs': 10
                 })
             ],
@@ -80,6 +80,7 @@ class TestMNIST(unittest.TestCase):
             l2_reg=0.0005,
             input_shape=[1,24,24],
             init='random',
+            cost='mlr',
             preprocessing=preprocessing,
             verbose=True
         )

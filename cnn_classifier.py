@@ -15,7 +15,7 @@ class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
     def __init__(self, architecture, optimizer, input_shape,
-                 srng, init='random', l2_reg=0, preprocessing=[],
+                 srng, init='random', cost='mlr', l2_reg=0, preprocessing=[],
                  verbose=False):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
@@ -49,11 +49,6 @@ class BaseCNNClassifier:
                     nb_outputs: ,
                     init_bias:
                   })
-                - ('softmax', {
-                    nb_outputs: ,
-                    init_std: , defaults to 0.01
-                    init_bias:  defaults to 0
-                  })
                 - ('dropout', dropout_proba)
                 - Pre-trained layers, as instances of the Layer class.
             optimizer
@@ -68,7 +63,12 @@ class BaseCNNClassifier:
                 - 'random' for random initialization of network weights.
             cost
                 cost function to use for training. One of:
-                - 'log-scaled' for log-scaled 
+                - 'mlr' for multinomial logistic regression cost function. Prediction output
+                  will be softmaxed probabilities in the single label case, and "generalized"
+                  softmaxed likelihoods in the multi label case.
+                - 'bpmll' for the back propagation multi label learning (BP-MLL) cost function
+                  by Zhang and Zhou, 2006.  Prediction output will be confidence scores in
+                  ]-inf; +inf[.
             l2_reg
                 parameter controlling the strength of l2 regularization.
             preprocessing
@@ -81,6 +81,7 @@ class BaseCNNClassifier:
         self.input_shape = input_shape
         self.srng = srng
         self.init = init
+        self.cost = cost
         self.l2_reg = l2_reg
         self.preprocessing = preprocessing
         self.verbose = verbose
@@ -90,11 +91,13 @@ class BaseCNNClassifier:
 
     def __getstate__(self):        
         return (self.architecture, self.optimizer, self.input_shape, self.srng, self.init,
-                self.l2_reg, self.preprocessing, self.verbose, self.model, self.named_conv)
+                self.cost, self.l2_reg, self.preprocessing, self.verbose, self.model,
+                self.named_conv)
 
     def __setstate__(self, state):
         (self.architecture, self.optimizer, self.input_shape, self.srng, self.init,
-         self.l2_reg, self.preprocessing, self.verbose, self.model, self.named_conv) = state
+         self.cost, self.l2_reg, self.preprocessing, self.verbose, self.model,
+         self.named_conv) = state
         self.compile_prediction()
         self.loaded = True
     
@@ -352,35 +355,6 @@ class BaseCNNClassifier:
                 if self.verbose:
                     print "Softmax layer " + repr(nb_fc)
                     print "fan in: " + repr(nb_inputs * prob_alive_in) + ", fan out: " + repr(nb_outputs)
-            elif layer_arch[0] == 'softmax':
-                # The inputs will be a flattened array of whatever came before.
-                nb_inputs = int(np.prod(current_input_shape))
-                p = layer_arch[1]
-                nb_outputs, std, bias = (
-                    p['nb_outputs'],
-                    p['init_std'] if 'init_std' in p else 0.01,
-                    p['init_bias'] if 'init_bias' in p else 0.
-                )
-                prob_alive_in = 1.
-                if isinstance(self.architecture[i-1], DropoutLayer):
-                    prob_alive_in = 1. - self.architecture[i-1].drop_proba
-                elif self.architecture[i-1][0] == 'dropout':
-                    prob_alive_in = 1. - self.architecture[i-1][1]
-                weights = np.random.uniform(
-                    -np.sqrt(6 / (nb_inputs * prob_alive_in + nb_outputs)),
-                    np.sqrt(6 / (nb_inputs + nb_outputs)),
-                    [nb_inputs, nb_outputs]
-                ).astype(theano.config.floatX)
-                biases = bias * np.ones(
-                    [nb_outputs],
-                    theano.config.floatX
-                )
-                layer = SoftmaxLayer('S', weights, biases)
-                layers.append(layer)
-                current_input_shape = layer.output_shape(current_input_shape)
-                if self.verbose:
-                    print "Softmax layer " + repr(nb_fc)
-                    print "fan in: " + repr(nb_inputs * prob_alive_in) + ", fan out: " + repr(nb_outputs)
             elif layer_arch[0] == 'dropout':
                 drop_proba = layer_arch[1]
                 layer_srng = RandomStreams(np.random.randint(0, 200000000))
@@ -398,7 +372,8 @@ class BaseCNNClassifier:
         return CNN(
             layers,
             np.prod(current_input_shape),
-            self.l2_reg
+            self.l2_reg,
+            cost = self.cost
         )
 
     def compute_activations(self, layer_number, test_set):
@@ -429,7 +404,7 @@ class CNN:
     """ Convolutional neural network.
     """
     
-    def __init__(self, layers, nb_classes, l2_reg=0):
+    def __init__(self, layers, nb_classes, l2_reg=0, cost='mlr'):
         """ Initializes a convolutional neural net with a specific architecture.
             Uses ReLU non-linearities, and dropout regularization.
 
@@ -443,8 +418,9 @@ class CNN:
                 labels in the multi-label setting.
         """
         self.layers = layers
-        self.l2_reg = l2_reg
         self.nb_classes = nb_classes
+        self.l2_reg = l2_reg
+        self.cost = cost
 
     def parameters(self):
         """ Returns the parameters of the convnet, as a list of shared theano
@@ -487,11 +463,16 @@ class CNN:
         # Then accumulate the FC layer forward passes.
         while (i < layer_number
                and np.any([isinstance(self.layers[i], lclass)
-                           for lclass in [FCLayer, LinearLayer, SoftmaxLayer, DropoutLayer]])):
+                           for lclass in [FCLayer, LinearLayer, DropoutLayer]])):
             fpass = self.layers[i].forward_pass(fpass, test=test)
             i += 1
 
-        return fpass  
+        # Depending on the cost function, add a softmax:
+
+        if self.cost == 'mlr':
+            fpass = T.nnet.softmax(fpass)
+
+        return fpass
     
     def cost_function(self, batch, labels, test=False):
         """ Returns the symbolic cost function of the convolutional neural
@@ -517,14 +498,18 @@ class CNN:
         for param in self.parameters():
             params_norm += T.sqr(param).sum()
 
-        cost = - T.mean(T.log(
-            T.sum(
-                self.forward_pass(batch, test=test) * labels,
-                axis=1
-            )
-        )) + self.l2_reg * params_norm / 2
-
-        return cost
+        
+        if self.cost == 'mlr':
+            return - T.mean(T.log(
+                T.sum(
+                    self.forward_pass(batch, test=test) * labels,
+                    axis=1
+                )
+            )) + self.l2_reg * params_norm / 2
+        elif self.cost == 'bp-mll':
+            raise NotImplementedError("BP-MLL cost function not available yet!")
+        else:
+            raise ValueError(repr(self.cost) + " is not a valid cost function.")
 
 class Layer:
     def forward_pass(self, batch):
@@ -615,49 +600,7 @@ class LinearLayer(Layer):
         self.nb_inputs, self.nb_outputs, weights, biases, self.name = state
         self.weights = theano.shared(weights, name=self.name+'_W')
         self.biases = theano.shared(biases, name=self.name+'_b')
-    
-class SoftmaxLayer(Layer):
-    """ Softmax layer. Essentially multinomial logistic regression.
-    """
 
-    def __init__(self, name, init_weights, init_biases):
-        """ Initializes the softmax layer with a matrix of initial
-            weights and a vector of initial biases.
-
-        Arguments:
-            name
-                name for the layer.
-            init_weights
-                matrix of nb_inputs by nb_outputs initial weights.
-            init_biases
-                vector of nb_outputs initial biases.
-        """
-        assert len(init_weights.shape) == 2
-        assert len(init_biases.shape) == 1
-        assert init_weights.shape[1] == init_biases.shape[0]
-        self.nb_inputs, self.nb_outputs = init_weights.shape
-        self.weights = theano.shared(init_weights, name=name+'_W')
-        self.biases = theano.shared(init_biases, name=name+'_b')
-        self.name = name
-
-    def forward_pass(self, input_matrix, test=False):
-        return T.nnet.softmax(T.dot(input_matrix, self.weights) + self.biases)
-
-    def parameters(self):
-        return [self.weights, self.biases]
-
-    def output_shape(self, input_shape):
-        return [self.nb_outputs]
-
-    def __getstate__(self):
-        return (self.nb_inputs, self.nb_outputs, self.weights.get_value(),
-                self.biases.get_value(), self.name)
-
-    def __setstate__(self, state):
-        self.nb_inputs, self.nb_outputs, weights, biases, self.name = state
-        self.weights = theano.shared(weights, name=self.name+'_W')
-        self.biases = theano.shared(biases, name=self.name+'_b')
-    
 class FCLayer(Layer):
     """ Fully connected layer with ReLU non-linearity.
     """
