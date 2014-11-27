@@ -15,7 +15,7 @@ class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
     def __init__(self, architecture, optimizer, input_shape,
-                 srng, init='random', cost='bp-mll', l2_reg=0, preprocessing=[],
+                 srng, init='random', l2_reg=0, preprocessing=[],
                  verbose=False):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
@@ -45,8 +45,12 @@ class BaseCNNClassifier:
                     init_std: , defaults to 0.01
                     init_bias:  defaults to 0
                   })
+                - ('linear', {
+                    nb_outputs: ,
+                    init_bias:
+                  })
                 - ('softmax', {
-                    nb_outputs; ,
+                    nb_outputs: ,
                     init_std: , defaults to 0.01
                     init_bias:  defaults to 0
                   })
@@ -319,6 +323,35 @@ class BaseCNNClassifier:
                 if self.verbose:
                     print "FC layer " + repr(nb_fc)
                     print "fan in: " + repr(nb_inputs * prob_alive_in) + ", fan out: " + repr(nb_units * prob_alive_out)
+            elif layer_arch[0] == 'linear':
+                # The inputs will be a flattened array of whatever came before.
+                nb_inputs = int(np.prod(current_input_shape))
+                p = layer_arch[1]
+                nb_outputs, std, bias = (
+                    p['nb_outputs'],
+                    p['init_std'] if 'init_std' in p else 0.01,
+                    p['init_bias'] if 'init_bias' in p else 0.
+                )
+                prob_alive_in = 1.
+                if isinstance(self.architecture[i-1], DropoutLayer):
+                    prob_alive_in = 1. - self.architecture[i-1].drop_proba
+                elif self.architecture[i-1][0] == 'dropout':
+                    prob_alive_in = 1. - self.architecture[i-1][1]
+                weights = np.random.uniform(
+                    -np.sqrt(6 / (nb_inputs * prob_alive_in + nb_outputs)),
+                    np.sqrt(6 / (nb_inputs + nb_outputs)),
+                    [nb_inputs, nb_outputs]
+                ).astype(theano.config.floatX)
+                biases = bias * np.ones(
+                    [nb_outputs],
+                    theano.config.floatX
+                )
+                layer = LinearLayer('L', weights, biases)
+                layers.append(layer)
+                current_input_shape = layer.output_shape(current_input_shape)
+                if self.verbose:
+                    print "Softmax layer " + repr(nb_fc)
+                    print "fan in: " + repr(nb_inputs * prob_alive_in) + ", fan out: " + repr(nb_outputs)
             elif layer_arch[0] == 'softmax':
                 # The inputs will be a flattened array of whatever came before.
                 nb_inputs = int(np.prod(current_input_shape))
@@ -361,16 +394,10 @@ class BaseCNNClassifier:
                 raise ValueError(repr(layer_arch) + 
                                  " is not a valid layer architecture.")
             i += 1
-
-        if len(layers) != nb_conv_mp + nb_fc + 1:
-            raise ValueError(
-                "The architecture should finish with exactly one Softmax layer."
-            )
         
         return CNN(
-            layers[0:nb_conv_mp], 
-            layers[nb_conv_mp:nb_conv_mp+nb_fc],
-            layers[-1],
+            layers,
+            np.prod(current_input_shape),
             self.l2_reg
         )
 
@@ -402,39 +429,29 @@ class CNN:
     """ Convolutional neural network.
     """
     
-    def __init__(self, conv_mp_layers, fc_layers, softmax_layer, l2_reg=0):
+    def __init__(self, layers, nb_classes, l2_reg=0):
         """ Initializes a convolutional neural net with a specific architecture.
             Uses ReLU non-linearities, and dropout regularization.
 
         Arguments:
-            conv_layers
-                list of layer objects specifying the architecture of the
-                convolution and max-pooling layers.
-            fc_layers
-                list of ints specifying the width of each final fully
-                connected layer.
-            conv_init
-                initialization procedure for convolutional filters.
-            fc_init
-                initialization procedure for fully-connected layer weights.
+            layers
+                initialized layers of the network.
+            l2_reg
+                l2 regularization (AKA weight decay) parameter.
+            nb_classes
+                number of classes this network classifies samples into. Number of
+                labels in the multi-label setting.
         """
-        assert np.all([isinstance(l, ConvLayer) or isinstance(l, MaxPoolLayer)
-                       or isinstance(l, AveragePoolLayer)
-                       for l in conv_mp_layers])
-        assert np.all([isinstance(l, FCLayer) or isinstance (l, DropoutLayer) for l in fc_layers])
-        assert isinstance(softmax_layer, SoftmaxLayer)
-        self.conv_mp_layers = conv_mp_layers
-        self.fc_layers = fc_layers
-        self.softmax_layer = softmax_layer
+        self.layers = layers
         self.l2_reg = l2_reg
-        self.nb_classes = softmax_layer.nb_outputs
+        self.nb_classes = nb_classes
 
     def parameters(self):
         """ Returns the parameters of the convnet, as a list of shared theano
             variables.
         """
         return reduce(lambda params, l1: params + l1.parameters(),
-                      self.conv_mp_layers + self.fc_layers + [self.softmax_layer],
+                      self.layers,
                       [])
 
     def forward_pass(self, batch, test=False):
@@ -449,36 +466,18 @@ class CNN:
             A symbolic (nb_images, nb_classes) matrix containing the output
             probabilities of the convnet classifier.
         """
-        # First accumulate the convolutional layer forward passes.
-        fpass = batch
-
-        for conv_mp_layer in self.conv_mp_layers:
-            fpass = conv_mp_layer.forward_pass(fpass)
-
-        # Reshape the output (batch_size, nb_features, nb_rows, nb_cols)
-        # tensor into a data matrix (batch_size, nb_features * nb_rows * nb_cols)
-        # suitable to be fed to the FC layers.
-        fpass = T.flatten(fpass, outdim=2)
-
-        # Then accumulate the FC layer forward passes.
-        for fc_layer in self.fc_layers:
-            fpass = fc_layer.forward_pass(fpass, test=test)
-
-        # Finally, apply the final softmax layer.
-        fpass = self.softmax_layer.forward_pass(fpass)
-
-        return fpass
+        return self.compute_activations(len(self.layers), batch, test=test)
 
     def compute_activations(self, layer_number, batch, test=False):
         # First accumulate the convolutional layer forward passes.
-        nb_layers = 0
         fpass = batch
+        i = 0
 
-        for conv_mp_layer in self.conv_mp_layers:
-            fpass = conv_mp_layer.forward_pass(fpass)
-            nb_layers += 1
-            if nb_layers >= layer_number:
-                return fpass
+        while (i < layer_number
+               and np.any([isinstance(self.layers[i], lclass)
+                           for lclass in [ConvLayer, MaxPoolLayer, AveragePoolLayer]])):
+            fpass = self.layers[i].forward_pass(fpass)
+            i += 1
 
         # Reshape the output (batch_size, nb_features, nb_rows, nb_cols)
         # tensor into a data matrix (batch_size, nb_features * nb_rows * nb_cols)
@@ -486,14 +485,11 @@ class CNN:
         fpass = T.flatten(fpass, outdim=2)
 
         # Then accumulate the FC layer forward passes.
-        for fc_layer in self.fc_layers:
-            fpass = fc_layer.forward_pass(fpass, test=test)
-            nb_layers += 1
-            if nb_layers >= layer_number:
-                return fpass
-
-        # Finally, apply the final softmax layer.
-        fpass = self.softmax_layer.forward_pass(fpass)
+        while (i < layer_number
+               and np.any([isinstance(self.layers[i], lclass)
+                           for lclass in [FCLayer, LinearLayer, SoftmaxLayer, DropoutLayer]])):
+            fpass = self.layers[i].forward_pass(fpass, test=test)
+            i += 1
 
         return fpass  
     
@@ -519,16 +515,14 @@ class CNN:
         params_norm = 0
 
         for param in self.parameters():
-            params_norm += T.dot(param.flatten(), param.flatten())
-
-        params_norm = T.sqrt(params_norm)
+            params_norm += T.sqr(param).sum()
 
         cost = - T.mean(T.log(
             T.sum(
                 self.forward_pass(batch, test=test) * labels,
                 axis=1
             )
-        )) #+ self.l2_reg * params_norm / 2
+        )) + self.l2_reg * params_norm / 2
 
         return cost
 
@@ -591,6 +585,36 @@ class DropoutLayer(Layer):
 
     def output_shape(self, input_shape):
         return input_shape
+
+class LinearLayer(Layer):
+    """ Simple linear layer.
+    """
+    def __init__(self, name, init_weights, init_biases):
+        assert len(init_weights.shape) == 2
+        assert len(init_biases.shape) == 1
+        assert init_weights.shape[1] == init_biases.shape[0]
+        self.nb_inputs, self.nb_outputs = init_weights.shape
+        self.weights = theano.shared(init_weights, name=name+'_W')
+        self.biases = theano.shared(init_biases, name=name+'_b')
+        self.name = name
+
+    def forward_pass(self, input_matrix, test=False):
+        return T.dot(input_matrix, self.weights) + self.biases
+
+    def parameters(self):
+        return [self.weights, self.biases]
+
+    def output_shape(self, input_shape):
+        return [self.nb_outputs]
+
+    def __getstate__(self):
+        return (self.nb_inputs, self.nb_outputs, self.weights.get_value(),
+                self.biases.get_value(), self.name)
+
+    def __setstate__(self, state):
+        self.nb_inputs, self.nb_outputs, weights, biases, self.name = state
+        self.weights = theano.shared(weights, name=self.name+'_W')
+        self.biases = theano.shared(biases, name=self.name+'_b')
     
 class SoftmaxLayer(Layer):
     """ Softmax layer. Essentially multinomial logistic regression.
@@ -616,7 +640,7 @@ class SoftmaxLayer(Layer):
         self.biases = theano.shared(init_biases, name=name+'_b')
         self.name = name
 
-    def forward_pass(self, input_matrix):
+    def forward_pass(self, input_matrix, test=False):
         return T.nnet.softmax(T.dot(input_matrix, self.weights) + self.biases)
 
     def parameters(self):
