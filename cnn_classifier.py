@@ -490,9 +490,6 @@ class CNN:
             A symbolic scalar representing the cost of the function for the given
             batch. Should be (sub) differentiable with regards to self.parameters().            
         """
-        # The cost function basically sums the log softmaxed probabilities for the
-        # correct
-        # labels. We average the results to make it insensitive to batch size.
         params_norm = 0
 
         for param in self.parameters():
@@ -500,6 +497,10 @@ class CNN:
 
         
         if self.cost == 'mlr':
+            # The cost function basically sums the log softmaxed probabilities for the
+            # correct
+            # labels. We average the results to make it insensitive to batch size.
+            
             return - T.mean(T.log(
                 T.sum(
                     self.forward_pass(batch, test=test) * labels,
@@ -507,7 +508,36 @@ class CNN:
                 )
             )) + self.l2_reg * params_norm / 2
         elif self.cost == 'bp-mll':
-            raise NotImplementedError("BP-MLL cost function not available yet!")
+            # BP-MLL is much more complicated. First, we need to count the number
+            # of labels and non-labels for each sample, to normalize the error measure
+            # for each sample.
+            nb_labels = T.sum(labels, axis=1)
+            nb_non_labels = self.nb_classes - nb_labels
+            err_norm_factor = 1. / (nb_labels * nb_non_labels)
+            # Separately, we need to measure the error for each pair of label/non-label
+            # for each sample. For simplicity of implementation, we do it in a dense
+            # fashion.
+            # M is a (batch_size, nb_classes, nb_classes) shaped mask, where M[i,j,k]
+            # is 1 if j is a label and k a non-label of sample i, 0 otherwise. We compute
+            # it by elementwise multiplication of the stacked label matrix with
+            # the transpose of the non-labels matrix.
+            _labels = labels.reshape((labels.shape[0], labels.shape[1], 1))
+            stack_labels = T.concatenate([_labels] * self.nb_classes, axis=2)
+            pairs_mask = stack_labels * (1 - stack_labels.dimshuffle(0, 2, 1))
+            # In a similar fashion, we compute the error for all pairs of outputs from the
+            # network, this time using an elementwise difference.
+            fpass = self.forward_pass(batch, test=test)
+            fpass = fpass.reshape((fpass.shape[0], fpass.shape[1], 1))
+            stack_outputs = T.concatenate([fpass] * self.nb_classes, axis=2)
+            pairs_err = stack_outputs - stack_outputs.dimshuffle(0, 2, 1)
+            # Apply the exponential to the masked results.
+            exp_pairs_err = T.exp(-pairs_mask * pairs_err)
+            # Sum it up for all labels.
+            error = T.sum(exp_pairs_err, axis=[1,2])
+            # Normalize the error.
+            norm_error = err_norm_factor * error
+            # Add the regularization term and take the mean over the batch.
+            return T.mean(norm_error) + self.l2_reg * params_norm / 2
         else:
             raise ValueError(repr(self.cost) + " is not a valid cost function.")
 
