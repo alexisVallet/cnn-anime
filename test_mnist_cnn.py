@@ -69,7 +69,7 @@ class TestMNIST(unittest.TestCase):
             ],
             optimizer=SGD(
                 batch_size=batch_size,
-                init_rate=0.001,
+                init_rate=0.0001,
                 nb_epochs=10,
                 learning_schedule=('decay', 0.9, 10),
                 update_rule=('momentum', 0.9),
@@ -77,10 +77,10 @@ class TestMNIST(unittest.TestCase):
                 verbose=1
             ),
             srng=RandomStreams(seed=156736127),
-            l2_reg=0.0005,
+            l2_reg=0,
             input_shape=[1,24,24],
             init='random',
-            cost='mlr',
+            cost='bp-mll',
             preprocessing=preprocessing,
             verbose=True
         )

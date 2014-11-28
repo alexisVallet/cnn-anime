@@ -54,10 +54,10 @@ class TestPixiv(unittest.TestCase):
             ],
             optimizer=SGD(
                 batch_size=batch_size,
-                init_rate=0.01,
+                init_rate=0.0001,
                 nb_epochs=70,
                 learning_schedule=('decay', 0.9, 300),
-                update_rule=('rmsprop', 0.9, 0.01),
+                update_rule=('momentum', 0.9),
                 pickle_schedule=(1, 'data/pixiv-115/models/test/bpmll'),
                 verbose=2
             ),
@@ -65,7 +65,7 @@ class TestPixiv(unittest.TestCase):
             l2_reg = 0.0005,
             input_shape=[3,224,224],
             init='random',
-            cost='mlr',
+            cost='bp-mll',
             preprocessing=[
                 MeanSubtraction(3, 'data/pixiv-115/raw_mean_pixel.pkl'),
                 RandomPatch(3, 224, 224, 10),
