@@ -69,18 +69,18 @@ class TestMNIST(unittest.TestCase):
             ],
             optimizer=SGD(
                 batch_size=batch_size,
-                init_rate=0.0001,
+                init_rate=0.001,
                 nb_epochs=10,
                 learning_schedule=('decay', 0.9, 10),
                 update_rule=('momentum', 0.9),
-                pickle_schedule=(2, 'data/mnist/models/test_model'),
+                pickle_schedule=(10, 'data/mnist/models/test_model'),
                 verbose=1
             ),
             srng=RandomStreams(seed=156736127),
-            l2_reg=0,
+            l2_reg=0.0005,
             input_shape=[1,24,24],
             init='random',
-            cost='bp-mll',
+            cost='multi-mlr',
             preprocessing=preprocessing,
             verbose=True
         )

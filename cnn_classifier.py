@@ -69,6 +69,7 @@ class BaseCNNClassifier:
                 - 'bpmll' for the back propagation multi label learning (BP-MLL) cost function
                   by Zhang and Zhou, 2006.  Prediction output will be confidence scores in
                   ]-inf; +inf[.
+                - 'multi-mlr' for a kind of compromise between the 2.
             l2_reg
                 parameter controlling the strength of l2 regularization.
             preprocessing
@@ -507,6 +508,14 @@ class CNN:
                     axis=1
                 )
             )) + self.l2_reg * params_norm / 2
+        elif self.cost == 'multi-mlr':
+            scores = self.forward_pass(batch, test=test)
+            exp_scores = T.exp(scores - scores.max(axis=1, keepdims=True))
+            label_scores = labels * exp_scores
+            non_label_scores = (1 - labels) * exp_scores
+            eps = 1E-5
+            
+            return - T.mean(T.log(T.sum(label_scores, axis=1) / (eps + T.sum(non_label_scores, axis=1))))
         elif self.cost == 'bp-mll':
             # BP-MLL is much more complicated. First, we need to count the number
             # of labels and non-labels for each sample, to normalize the error measure
