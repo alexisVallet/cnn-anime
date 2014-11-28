@@ -46,18 +46,16 @@ class TestPixiv(unittest.TestCase):
                 ('conv', {'nb_filters': 384, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
                 ('conv', {'nb_filters': 256, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
                 ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2}),
-                ('fc', {'nb_units': 4096, 'init_bias': 1.}),
-                ('dropout', 0.5),
-                ('fc', {'nb_units': 4096, 'init_bias': 1.}),
+                ('fc', {'nb_units': 2048, 'init_bias': 1.}),
                 ('dropout', 0.5),
                 ('linear', {'nb_outputs': 115})
             ],
             optimizer=SGD(
                 batch_size=batch_size,
-                init_rate=0.0001,
+                init_rate=0.01,
                 nb_epochs=70,
                 learning_schedule=('decay', 0.9, 300),
-                update_rule=('momentum', 0.9),
+                update_rule=('rmsprop', 0.9, 0.01),
                 pickle_schedule=(1, 'data/pixiv-115/models/test/bpmll'),
                 verbose=2
             ),
@@ -65,7 +63,7 @@ class TestPixiv(unittest.TestCase):
             l2_reg = 0.0005,
             input_shape=[3,224,224],
             init='random',
-            cost='bp-mll',
+            cost='multi-mlr',
             preprocessing=[
                 MeanSubtraction(3, 'data/pixiv-115/raw_mean_pixel.pkl'),
                 RandomPatch(3, 224, 224, 10),
