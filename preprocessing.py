@@ -395,7 +395,6 @@ class BaseRandomFlipSet(Dataset):
 
 class RandomFlipSet(BaseRandomFlipSet, DatasetMixin):
     pass
-
         
 class RandomFlip(DatasetTransformer):
     # Randomly flips training samples horizontally.
@@ -407,3 +406,4 @@ class RandomFlip(DatasetTransformer):
 
     def test_data_transform(self, dataset):
         return dataset
+
