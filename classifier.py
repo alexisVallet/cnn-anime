@@ -100,3 +100,39 @@ class ClassifierMixin:
         )
         
         return map(lambda f: f(expected, predicted), metrics)
+
+    def confidences(self, test_samples, batch_size=30):
+        # Compute the confidence scores batch by batch.
+        splits = mini_batch_split(test_samples, batch_size)
+        nb_batches = splits.size - 1
+        offset = 0
+        confidence_mat = None
+        test_labels = test_samples.get_labels()
+        sample_it = iter(test_samples)
+
+        for i in range(nb_batches):
+            cur_batch_size = splits[i+1] - splits[i]
+            batch = []
+            batch_labels = test_labels[splits[i]:splits[i+1]]
+            
+            for j in range(cur_batch_size):
+                batch.append(sample_it.next())
+            batch_probas = self.predict_probas(
+                self.named_conv.test_data_transform(
+                    IdentityDataset(batch, batch_labels)
+                )
+            )
+            if confidence_mat == None:
+                nb_classes = batch_probas.shape[1]
+                confidence_mat = np.empty([len(test_samples), nb_classes])
+            confidence_mat[offset:offset+cur_batch_size] = batch_probas
+            offset += cur_batch_size
+
+        # Put it in a dict label => probas
+        conf_dict = {}
+        nb_classes = confidence_mat.shape[1]
+
+        for i in range(nb_classes):
+            conf_dict[self.named_conv.int_to_label[i]] = confidence_mat[:,i]
+
+        return conf_dict

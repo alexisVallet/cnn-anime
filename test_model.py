@@ -28,8 +28,9 @@ if __name__ == "__main__":
         test_data,
         25,
         metrics=[hamming_score, multi_label_recall, multi_label_precision],
-        method=('thresh', 0.2)
+        method='top-1'
     )
     print "Accuracy: " + repr(accuracy)
     print "Recall: " + repr(recall)
     print "Precision: " + repr(precision)
+

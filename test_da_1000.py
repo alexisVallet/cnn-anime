@@ -8,8 +8,9 @@ from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 
 from dataset import ListDataset, load_da_1000
 from optimize import SGD
-from cnn_classifier import CNNClassifier
+from cnn_classifier import CNNClassifier, NoTraining
 from preprocessing import MeanSubtraction, RandomPatch, Resize, RandomFlip
+from metrics import hamming_score
 
 class TestDA1000(unittest.TestCase):
     @classmethod
@@ -24,7 +25,7 @@ class TestDA1000(unittest.TestCase):
         for i in range(nb_folds):
             print "Loading pre-trained classifier..."
             p1m_classifier = None
-            with open('data/pixiv-1M/models/pixiv_1M48.pkl', 'rb') as p1m_file:
+            with open('data/pixiv-115/models/mlr-l2/mlr_l2_30.pkl', 'rb') as p1m_file:
                 p1m_classifier = pickle.load(p1m_file)
             train_set = ListDataset(
                 reduce(lambda l1, l2: l1 + l2, self.folds_img[0:i] + self.folds_img[i+1:]),
@@ -38,9 +39,8 @@ class TestDA1000(unittest.TestCase):
             print repr(len(train_set)) + " training samples"
             da1000_classifier = CNNClassifier(
                 architecture=(
-                    p1m_classifier.model.conv_mp_layers +
-                    p1m_classifier.model.fc_layers +
-                    [('softmax', {'nb_outputs': 20})]
+                    map(NoTraining, p1m_classifier.model.layers[0:10]) +
+                    [('linear', {'nb_outputs': 20})]
                 ),
                 optimizer=SGD(
                     batch_size=batch_size,
@@ -64,9 +64,12 @@ class TestDA1000(unittest.TestCase):
             )
             print "Training..."
             da1000_classifier.train_named(train_set)
-            print "Accuracy: " + repr(da1000_classifier.mlabel_metrics_named(test_set, 50))
+            print "Accuracy: " + repr(da1000_classifier.mlabel_metrics_named(
+                test_set,
+                30,
+                metrics=[hamming_score],
+                method='top-1'
+            ))
     
 if __name__ == "__main__":
     unittest.main()
-
-    

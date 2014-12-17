@@ -19,7 +19,7 @@ class SGD:
     def __init__(self, batch_size, init_rate, nb_epochs, learning_schedule='fixed',
                  update_rule='simple', accuracy_measure='sample', pickle_schedule=None,
                  verbose=0):
-        """ Initialized the optimization method.
+        """ Initialize the optimization method.
         
         Arguments:
             batch_size
@@ -147,9 +147,9 @@ class SGD:
                 grad = T.grad(cost, parameters[i])
                 new_msqr = msqr_fact * msqr[i] + (1 - msqr_fact) * grad * grad
                 # We require a minimum norm because:
-                # - It effectively bounds the learning_rate, which is beneficial for
+                # - It effectively bounds the learning rate, which is beneficial for
                 #   the same reasons as in RPROP.
-                # - It avoids numerics issues when the mean squared norm becomes too
+                # - It avoids numerical issues when the mean squared norm becomes too
                 #   small.
                 clip_mnorm = T.maximum(T.sqrt(new_msqr), min_norm)
                 updates += [
@@ -315,7 +315,7 @@ class SGD:
                 if since_last_pickle >= period:
                     if self.verbose >= 1:
                         print "Pickling current model..."
-                    with open(name + repr(t) + '.pkl', 'wb') as outfile:
+                    with open(name + '_' + repr(t) + '.pkl', 'wb') as outfile:
                         pickle.dump(
                             classifier,
                             outfile,

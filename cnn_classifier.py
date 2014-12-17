@@ -30,7 +30,7 @@ class BaseCNNClassifier:
                     cols: ,
                     stride_r: ,  defaults to 1
                     stride_c: ,  defaults to 1
-                    init_std: ,  defaults to 0.01
+                    padding: , defaults to (0,0)
                     init_bias:  defaults to 0
                   })
                 - ('max-pool', {
@@ -168,7 +168,7 @@ class BaseCNNClassifier:
 
         return probas
 
-    def predict_labels(self, images, method='top-1'):
+    def predict_labels(self, images, method='top-1', confidence=False):
         """ Predicts the label sets for a number of images.
 
         Arguments:
@@ -180,9 +180,21 @@ class BaseCNNClassifier:
                 - ('thresh', t) thresholds the probabilities at t, i.e. all probabilities
                   greater than t will be included in the labels set. If there are no such
                   probabilities, then default to top-1.
+            confidence
+                Set to true to return (label, confidence) pairs instead of just labels.
         """
         if method == 'top-1':
-            return np.argmax(self.predict_probas(images), axis=1)
+            probas = self.predict_probas(images)
+            max_idxs = np.argmax(probas, axis=1)
+            labels = []
+            nb_samples, nb_classes = probas.shape
+
+            for i in range(nb_samples):
+                if confidence:
+                    labels.append(frozenset([(max_idxs[i], probas[i,max_idxs[i]])]))
+                else:
+                    labels.append(frozenset([max_idxs[i]]))
+            return labels
         elif method[0] == 'thresh':
             t = method[1]
             probas = self.predict_probas(images)
@@ -193,9 +205,15 @@ class BaseCNNClassifier:
                 labels_set = []
                 for j in range(nb_classes):
                     if probas[i,j] > t:
-                        labels_set.append(j)
+                        if confidence:
+                            labels_set.append((j, probas[i,j]))
+                        else:
+                            labels_set.append(j)
                 if labels_set == []:
-                    labels_set.append(np.argmax(probas[i]))
+                    if confidence:
+                        labels_set.append((np.argmax(probas[i]), np.max(probas[i])))
+                    else:
+                        labels_set.append(np.argmax(probas[i]))
                 labels.append(frozenset(labels_set))
             return labels
 
@@ -241,14 +259,15 @@ class BaseCNNClassifier:
             elif layer_arch[0] == 'conv':
                 input_dim = current_input_shape[0]
                 p = layer_arch[1]
-                nb_filters, nb_rows, nb_cols, stride_r, stride_c, std, bias = (
+                nb_filters, nb_rows, nb_cols, stride_r, stride_c, std, bias, padding = (
                     p['nb_filters'],
                     p['rows'],
                     p['cols'],
                     p['stride_r'] if 'stride_r' in p else 1,
                     p['stride_c'] if 'stride_c' in p else 1,
                     p['init_std'] if 'init_std' in p else 0.01,
-                    p['init_bias'] if 'init_bias' in p else 0.
+                    p['init_bias'] if 'init_bias' in p else 0.,
+                    p['padding'] if 'padding' in p else (0,0)
                 )
                 fan_in = nb_rows * nb_cols * input_dim
                 pool_size = None
@@ -268,7 +287,13 @@ class BaseCNNClassifier:
                     [1, nb_filters, 1, 1],
                     theano.config.floatX
                 )
-                layer = ConvLayer('C' + repr(nb_conv_mp), filters, biases, (stride_r, stride_c))
+                layer = ConvLayer(
+                    'C' + repr(nb_conv_mp),
+                    filters,
+                    biases,
+                    (stride_r, stride_c),
+                    padding
+                )
                 layers.append(layer)
                 nb_conv_mp += 1
                 current_input_shape = layer.output_shape(current_input_shape)
@@ -337,7 +362,10 @@ class BaseCNNClassifier:
                     p['init_bias'] if 'init_bias' in p else 0.
                 )
                 prob_alive_in = 1.
-                if isinstance(self.architecture[i-1], DropoutLayer):
+                if (isinstance(self.architecture[i-1], NoTraining)
+                    and isinstance(self.architecture[i-1].layer, DropoutLayer)):
+                    prob_alive_in = 1. - self.architecture[i-1].layer.drop_proba
+                elif isinstance(self.architecture[i-1], DropoutLayer):
                     prob_alive_in = 1. - self.architecture[i-1].drop_proba
                 elif self.architecture[i-1][0] == 'dropout':
                     prob_alive_in = 1. - self.architecture[i-1][1]
@@ -450,28 +478,9 @@ class CNN:
         fpass = batch
         i = 0
 
-        while (i < layer_number
-               and np.any([isinstance(self.layers[i], lclass)
-                           for lclass in [ConvLayer, MaxPoolLayer, AveragePoolLayer]])):
+        while (i < layer_number):
             fpass = self.layers[i].forward_pass(fpass)
             i += 1
-
-        # Reshape the output (batch_size, nb_features, nb_rows, nb_cols)
-        # tensor into a data matrix (batch_size, nb_features * nb_rows * nb_cols)
-        # suitable to be fed to the FC layers.
-        fpass = T.flatten(fpass, outdim=2)
-
-        # Then accumulate the FC layer forward passes.
-        while (i < layer_number
-               and np.any([isinstance(self.layers[i], lclass)
-                           for lclass in [FCLayer, LinearLayer, DropoutLayer]])):
-            fpass = self.layers[i].forward_pass(fpass, test=test)
-            i += 1
-
-        # Depending on the cost function, add a softmax:
-
-        if self.cost == 'mlr':
-            fpass = T.nnet.softmax(fpass)
 
         return fpass
     
@@ -495,7 +504,7 @@ class CNN:
 
         for param in self.parameters():
             params_norm += T.sqr(param).sum()
-
+        reg_term = 0 if self.l2_reg == 0 else self.l2_reg * params_norm / 2
         
         if self.cost == 'mlr':
             # The cost function basically sums the log softmaxed probabilities for the
@@ -504,18 +513,21 @@ class CNN:
             
             return - T.mean(T.log(
                 T.sum(
-                    self.forward_pass(batch, test=test) * labels,
+                    T.nnet.softmax(self.forward_pass(batch, test=test)) * labels,
                     axis=1
                 )
-            )) + self.l2_reg * params_norm / 2
+            )) + reg_term
         elif self.cost == 'multi-mlr':
             scores = self.forward_pass(batch, test=test)
             exp_scores = T.exp(scores - scores.max(axis=1, keepdims=True))
             label_scores = labels * exp_scores
-            non_label_scores = (1 - labels) * exp_scores
-            eps = 1E-5
+            non_label_scores = (1. - labels) * exp_scores
+            eps = 1E-10
             
-            return - T.mean(T.log(T.sum(label_scores, axis=1) / (eps + T.sum(non_label_scores, axis=1))))
+            return - T.mean(T.log(
+                (eps + label_scores.sum(axis=1))
+                / (eps + non_label_scores.sum(axis=1))
+            )) + reg_term
         elif self.cost == 'bp-mll':
             # BP-MLL is much more complicated. First, we need to count the number
             # of labels and non-labels for each sample, to normalize the error measure
@@ -546,7 +558,7 @@ class CNN:
             # Normalize the error.
             norm_error = err_norm_factor * error
             # Add the regularization term and take the mean over the batch.
-            return T.mean(norm_error) + self.l2_reg * params_norm / 2
+            return T.mean(norm_error) + reg_term
         else:
             raise ValueError(repr(self.cost) + " is not a valid cost function.")
 
@@ -623,7 +635,7 @@ class LinearLayer(Layer):
         self.name = name
 
     def forward_pass(self, input_matrix, test=False):
-        return T.dot(input_matrix, self.weights) + self.biases
+        return T.dot(T.flatten(input_matrix, outdim=2), self.weights) + self.biases
 
     def parameters(self):
         return [self.weights, self.biases]
@@ -665,7 +677,7 @@ class FCLayer(Layer):
         self.name = name
 
     def forward_pass(self, input_matrix, test=False):
-        return T.maximum(T.dot(input_matrix, self.weights) + self.biases, 0)
+        return T.maximum(T.dot(T.flatten(input_matrix, outdim=2), self.weights) + self.biases, 0)
 
     def parameters(self):
         return [self.weights, self.biases]
@@ -686,7 +698,7 @@ class ConvLayer(Layer):
     """ Convolutional layer with ReLU non-linearity and max-pooling.
     """
     
-    def __init__(self, name, init_filters, init_biases, pooling=(1,1)):
+    def __init__(self, name, init_filters, init_biases, pooling=(1,1), padding=(0,0)):
         """ Initializes a convolutional layer with a set of initial filters and 
             biases.
 
@@ -709,6 +721,7 @@ class ConvLayer(Layer):
         self.biases = theano.shared(init_biases, name+'_b')
         self.filters_shape = init_filters.shape
         self.pooling = pooling
+        self.padding = padding
         self.name = name
         
     def forward_pass(self, fmaps):
@@ -717,7 +730,7 @@ class ConvLayer(Layer):
         out_fmaps = dnn_conv(
             fmaps,
             self.filters,
-            border_mode='valid',
+            border_mode=self.padding,
             subsample=self.pooling
         )
         nb_filters = self.filters_shape[0]
@@ -733,9 +746,10 @@ class ConvLayer(Layer):
         return [self.filters, self.biases]
 
     def output_shape(self, input_shape):
+        pad_r, pad_c = self.padding
         out_shape = [
-            input_shape[1] - self.filters_shape[2] + 1,
-            input_shape[2] - self.filters_shape[3] + 1
+            input_shape[1] - self.filters_shape[2] + 1 + pad_r * 2,
+            input_shape[2] - self.filters_shape[3] + 1 + pad_c * 2
         ]
         
         return [
@@ -746,10 +760,10 @@ class ConvLayer(Layer):
 
     def __getstate__(self):
         return (self.filters.get_value(), self.biases.get_value(), self.filters_shape,
-                self.pooling, self.name)
+                self.padding, self.pooling, self.name)
 
     def __setstate__(self, state):
-        filters, biases, self.filters_shape, self.pooling, self.name = state
+        filters, biases, self.filters_shape, self.padding, self.pooling, self.name = state
         self.filters = theano.shared(filters, self.name+'_W')
         self.biases = theano.shared(biases, self.name+'_b')
     
@@ -789,9 +803,8 @@ class AveragePoolLayer(Layer):
         pass
 
     def forward_pass(self, fmaps):
-        # Computes the mean of each individual feature map, effectively making
-        # them into 1 by 1 feature maps.
-        return T.mean(fmaps, axis=[2,3], keepdims=True)
+        # Computes the mean of each individual feature map.
+        return T.mean(fmaps, axis=[2,3])
 
     def parameters(self):
         return []
@@ -802,3 +815,19 @@ class AveragePoolLayer(Layer):
             1,
             1
         ]
+
+class NoTraining(Layer):
+    """ Wraps another layer, except that it will not be trained. Useful for supervised
+        pre-training.
+    """
+    def __init__(self, layer):
+        self.layer = layer
+
+    def forward_pass(self, batch):
+        return self.layer.forward_pass(batch)
+
+    def parameters(self):
+        return []
+
+    def output_shape(self, input_shape):
+        return self.layer.output_shape(input_shape)
