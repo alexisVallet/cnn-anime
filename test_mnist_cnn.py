@@ -50,7 +50,7 @@ class TestMNIST(unittest.TestCase):
         print "Initializing classifier..."
         preprocessing = [
             MeanSubtraction(1),
-            RandomPatch(1, 24, 24, 10)
+            RandomPatch(1, 24, 24, ('random_subwin', 10))
         ]
         batch_size = 64
         classifier = CNNClassifier(
@@ -80,7 +80,7 @@ class TestMNIST(unittest.TestCase):
             l2_reg=0.0005,
             input_shape=[1,24,24],
             init='random',
-            cost='multi-mlr',
+            cost='mlr',
             preprocessing=preprocessing,
             verbose=True
         )

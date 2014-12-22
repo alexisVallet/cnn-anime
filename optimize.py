@@ -18,7 +18,7 @@ class SGD:
     """
     def __init__(self, batch_size, init_rate, nb_epochs, learning_schedule='fixed',
                  update_rule='simple', accuracy_measure='sample', pickle_schedule=None,
-                 verbose=0):
+                 valid_batchsize=None, verbose=0):
         """ Initialize the optimization method.
         
         Arguments:
@@ -65,6 +65,7 @@ class SGD:
         self.update_rule = update_rule
         self.accuracy_measure = accuracy_measure
         self.pickle_schedule = pickle_schedule
+        self.valid_batchsize = batch_size if valid_batchsize == None else valid_batchsize
         self.verbose = verbose
 
     def optimize(self, classifier, samples, valid_data=None, compile_mode=None):
@@ -250,7 +251,7 @@ class SGD:
                 tofrozenset = lambda l: l if isinstance(l, frozenset) else frozenset([l])
                 valid_labels = map(tofrozenset, valid_data.get_labels())
                 predicted_labels = []
-                valid_splits = mini_batch_split(valid_data, self.batch_size)
+                valid_splits = mini_batch_split(valid_data, self.valid_batchsize)
                 nb_valid_batches = valid_splits.size - 1
                 valid_iter = iter(valid_data)
                 avg_valid_cost = 0.
