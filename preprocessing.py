@@ -342,32 +342,39 @@ class RandomPatch(DatasetTransformer):
     # Picks normally distributed random patches (i.e. gaussian with mean the center
     # of the image, stretched to fit the aspect ratio) at training time.
     
-    def __init__(self, nb_channels, patch_rows, patch_cols, nb_test):
+    def __init__(self, nb_channels, patch_rows, patch_cols, prediction=('rand_subwin', 10)):
         self.nb_channels = nb_channels
         self.patch_rows = patch_rows
         self.patch_cols = patch_cols
-        self.nb_test = nb_test
+        self.prediction = prediction
                 
     def train_data_transform(self, dataset):        
         return TrainRandomPatch(self.nb_channels, self.patch_rows,
                                 self.patch_cols, dataset)
 
     def test_data_transform(self, dataset):
-        return TestRandomPatch(self.nb_channels, self.patch_rows,
-                               self.patch_cols, self.nb_test, dataset)
+        if self.prediction == 'full_size':
+            return dataset
+        else:
+            return TestRandomPatch(self.nb_channels, self.patch_rows,
+                                   self.patch_cols, self.prediction[1], dataset)
     
     def proba_transform(self, probas):
-        nb_samples = probas.shape[0]
-        assert nb_samples % self.nb_test == 0
-        # Averages probas for the nb_test samples from which random patches were drawn.
-        out_probas = np.empty(
-            [nb_samples / self.nb_test, probas.shape[1]],
-            np.float32
-        )
-        for i in range(nb_samples / self.nb_test):
-            out_probas[i] = np.mean(probas[i*self.nb_test:(i+1)*self.nb_test], axis=0)
+        if self.prediction == 'full_size':
+            return probas
+        else:
+            nb_samples = probas.shape[0]
+            nb_test = self.prediction[1]
+            assert nb_samples % nb_test == 0
+            # Averages probas for the nb_test samples from which random patches were drawn.
+            out_probas = np.empty(
+                [nb_samples / nb_test, probas.shape[1]],
+                np.float32
+            )
+            for i in range(nb_samples / nb_test):
+                out_probas[i] = np.mean(probas[i*nb_test:(i+1)*nb_test], axis=0)
 
-        return out_probas
+            return out_probas
 
 class BaseRandomFlipSet(Dataset):
     def __init__(self, dataset):

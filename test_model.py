@@ -26,7 +26,7 @@ if __name__ == "__main__":
     print "Predicting..."
     accuracy, recall, precision = classifier.mlabel_metrics_named(
         test_data,
-        25,
+        30,
         metrics=[hamming_score, multi_label_recall, multi_label_precision],
         method='top-1'
     )

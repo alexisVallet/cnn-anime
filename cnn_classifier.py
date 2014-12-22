@@ -49,7 +49,7 @@ class BaseCNNClassifier:
                     nb_outputs: ,
                     init_bias:
                   })
-                - ('dropout', dropout_proba)
+                - ('dropout', dropout_proba)                
                 - Pre-trained layers, as instances of the Layer class.
             optimizer
                 optimization method to use for training the network. Should be
@@ -269,12 +269,17 @@ class BaseCNNClassifier:
                     p['init_bias'] if 'init_bias' in p else 0.,
                     p['padding'] if 'padding' in p else (0,0)
                 )
-                fan_in = nb_rows * nb_cols * input_dim
+                in_pool_size = 1.
+                if i > 0 and self.architecture[i-1][0] == 'dropout':
+                    in_pool_size = 1. / (1 - self.architecture[i-1][1])
+                fan_in = nb_rows * nb_cols * input_dim / in_pool_size
                 pool_size = None
                 if self.architecture[i+1] == 'avg-pool':
                     pool_size = nb_rows * nb_cols
                 elif self.architecture[i+1][0] == 'max-pool':
                     pool_size = self.architecture[i+1][1]['stride_r'] * self.architecture[i+1][1]['stride_c']
+                elif self.architecture[i+1][0] == 'dropout':
+                    pool_size = 1. / (1 - self.architecture[i+1][1])
                 else:
                     pool_size = 1
                 fan_out = float(nb_filters * nb_rows * nb_cols) / pool_size
@@ -608,13 +613,15 @@ class DropoutLayer(Layer):
         else:
             # Generate a mask of ones and zeros of the shape of the input tensor.
             mask = self.srng.binomial(
-                size=input_tensor.shape,
+                size=(input_tensor.shape[0], input_tensor.shape[1], 1, 1) if len(self.input_shape) == 2 else input_tensor.shape,
                 n=1,
                 p=1. - self.drop_proba,
                 nstreams=np.prod(self.input_shape),
             )
-        
-            return input_tensor * T.cast(mask, theano.config.floatX)
+            if len(self.input_shape) == 2:
+                return input_tensor * T.addbroadcast(T.cast(mask, theano.config.floatX), 2, 3)
+            else:
+                return input_tensor * T.cast(mask, theano.config.floatX)
 
     def parameters(self):
         return []
