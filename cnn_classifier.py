@@ -10,13 +10,15 @@ from sklearn.cluster import KMeans
 import copy
 
 from classifier import ClassifierMixin
+from dataset import IdentityDataset
+from spp_prediction import spp_predict
 
 class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
     def __init__(self, architecture, optimizer, input_shape,
-                 srng, init='random', cost='mlr', l2_reg=0, preprocessing=[],
-                 verbose=False):
+                 srng, init='random', cost='mlr', l2_reg=0, orth_penalty=0,
+                 preprocessing=[], verbose=False):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
             initialization procedure.
@@ -61,6 +63,8 @@ class BaseCNNClassifier:
             init
                 initialization procedure for the network. Can be:
                 - 'random' for random initialization of network weights.
+                - 'orth' for random initialization of network weights, with orthogonal weights
+                  for filters on the same convolutional layer.
             cost
                 cost function to use for training. One of:
                 - 'mlr' for multinomial logistic regression cost function. Prediction output
@@ -72,6 +76,9 @@ class BaseCNNClassifier:
                 - 'multi-mlr' for a kind of compromise between the 2.
             l2_reg
                 parameter controlling the strength of l2 regularization.
+            orth_reg
+                parameter controlling the strength of non-orthogonality penalty
+                for convolutional layers.
             preprocessing
                 pipeline of dataset transformers for training and testing preprocessing.
             verbose
@@ -84,6 +91,7 @@ class BaseCNNClassifier:
         self.init = init
         self.cost = cost
         self.l2_reg = l2_reg
+        self.orth_penalty = orth_penalty
         self.preprocessing = preprocessing
         self.verbose = verbose
         self.model = None
@@ -119,7 +127,7 @@ class BaseCNNClassifier:
             print "Initializing weights..."
         # If loaded from a file, use the already initialized weights.
         if not self.loaded:
-            if self.init == 'random':
+            if self.init in ['random', 'orth']:
                 self.model = self.init_random()
             else:
                 raise ValueError(repr(self.init) + 
@@ -283,15 +291,29 @@ class BaseCNNClassifier:
                 else:
                     pool_size = 1
                 fan_out = float(nb_filters * nb_rows * nb_cols) / pool_size
-                filters = np.random.uniform(
-                    - np.sqrt(6 / (fan_in + fan_out)),
-                    np.sqrt(6 / (fan_in + fan_out)),
-                    [nb_filters, input_dim, nb_rows, nb_cols]
-                ).astype(theano.config.floatX)
+                filters = None
                 biases = bias * np.ones(
                     [1, nb_filters, 1, 1],
                     theano.config.floatX
                 )
+                if self.init == 'random':
+                    filters = np.random.uniform(
+                        - np.sqrt(6 / (fan_in + fan_out)),
+                        np.sqrt(6 / (fan_in + fan_out)),
+                        [nb_filters, input_dim, nb_rows, nb_cols]
+                    ).astype(theano.config.floatX)
+                    print filters.std()
+                elif self.init == 'orth':
+                    # Generate a uniformly distributed random orthogonal matrix using
+                    # the QR decomposition of a normally-dsitributed one.
+                    X = np.random.normal(size=[nb_rows * nb_cols * input_dim, nb_filters])
+                    Q, R = np.linalg.qr(X, mode='reduced')
+                    filters = (
+                        np.sqrt(6 / (fan_in + fan_out)) *
+                        np.sqrt(nb_rows*nb_cols*input_dim) *
+                        Q.T.reshape([nb_filters, input_dim, nb_rows, nb_cols]) / 2
+                    ).astype(theano.config.floatX)
+                    print filters.std()
                 layer = ConvLayer(
                     'C' + repr(nb_conv_mp),
                     filters,
@@ -407,6 +429,7 @@ class BaseCNNClassifier:
             layers,
             np.prod(current_input_shape),
             self.l2_reg,
+            self.orth_penalty,
             cost = self.cost
         )
 
@@ -431,6 +454,33 @@ class BaseCNNClassifier:
 
         return activations()
 
+    def spp_predict_confs(self, layer_number, test_set, pyramid):
+        """ Compute SPP predictions for a CNN. The CNN needs to have confidence maps as
+            activations of the specified layer.
+        """
+        # Run the preprocessing pipeline.
+        pp_images = test_set
+
+        for preproc in self.preprocessing:
+            pp_images = preproc.test_data_transform(pp_images)
+        confs = None
+        # Compilation of the prediction function.
+        images = T.tensor4('images')
+        f_predict = theano.function(
+            [images],
+            spp_predict(self.model.compute_activations(14, images, test=True), pyramid)
+        )
+        
+        for i, sample in enumerate(pp_images):
+            # Compute confidence maps for the sample.
+            images = IdentityDataset([sample], [frozenset([0])]).to_array()
+            confs_ = f_predict(images)
+            nb_labels = confs_.shape[1]
+            if confs == None:
+                confs = np.zeros([len(test_set), nb_labels])
+            confs[i] = confs_[0]
+        return confs
+
 class CNNClassifier(BaseCNNClassifier, ClassifierMixin):
     pass
 
@@ -438,7 +488,7 @@ class CNN:
     """ Convolutional neural network.
     """
     
-    def __init__(self, layers, nb_classes, l2_reg=0, cost='mlr'):
+    def __init__(self, layers, nb_classes, l2_reg=0, orth_penalty=0, cost='mlr'):
         """ Initializes a convolutional neural net with a specific architecture.
             Uses ReLU non-linearities, and dropout regularization.
 
@@ -447,6 +497,8 @@ class CNN:
                 initialized layers of the network.
             l2_reg
                 l2 regularization (AKA weight decay) parameter.
+            orth_penalty
+                non-orthogonality penalty parameter.
             nb_classes
                 number of classes this network classifies samples into. Number of
                 labels in the multi-label setting.
@@ -454,6 +506,7 @@ class CNN:
         self.layers = layers
         self.nb_classes = nb_classes
         self.l2_reg = l2_reg
+        self.orth_penalty = orth_penalty
         self.cost = cost
 
     def parameters(self):
@@ -510,6 +563,13 @@ class CNN:
         for param in self.parameters():
             params_norm += T.sqr(param).sum()
         reg_term = 0 if self.l2_reg == 0 else self.l2_reg * params_norm / 2
+
+        orth_penalty = 0
+        
+        for layer in self.layers:
+            if isinstance(layer, ConvLayer):
+                orth_penalty += layer.orth_penalty()
+        orth_penalty = 0 if self.orth_penalty == 0 else self.orth_penalty * orth_penalty
         
         if self.cost == 'mlr':
             # The cost function basically sums the log softmaxed probabilities for the
@@ -521,7 +581,7 @@ class CNN:
                     T.nnet.softmax(self.forward_pass(batch, test=test)) * labels,
                     axis=1
                 )
-            )) + reg_term
+            )) + reg_term + orth_penalty
         elif self.cost == 'multi-mlr':
             scores = self.forward_pass(batch, test=test)
             exp_scores = T.exp(scores - scores.max(axis=1, keepdims=True))
@@ -532,7 +592,7 @@ class CNN:
             return - T.mean(T.log(
                 (eps + label_scores.sum(axis=1))
                 / (eps + non_label_scores.sum(axis=1))
-            )) + reg_term
+            )) + reg_term + orth_penalty
         elif self.cost == 'bp-mll':
             # BP-MLL is much more complicated. First, we need to count the number
             # of labels and non-labels for each sample, to normalize the error measure
@@ -563,7 +623,7 @@ class CNN:
             # Normalize the error.
             norm_error = err_norm_factor * error
             # Add the regularization term and take the mean over the batch.
-            return T.mean(norm_error) + reg_term
+            return T.mean(norm_error) + reg_term + orth_penalty
         else:
             raise ValueError(repr(self.cost) + " is not a valid cost function.")
 
@@ -751,6 +811,13 @@ class ConvLayer(Layer):
             
     def parameters(self):
         return [self.filters, self.biases]
+
+    def orth_penalty(self):
+        flat_filters = T.flatten(self.filters, outdim=2)
+        penalties = T.dot(flat_filters, flat_filters.T)
+        diag_mask = 1 - T.identity_like(penalties)
+
+        return T.abs_((penalties * diag_mask).sum() / 2)
 
     def output_shape(self, input_shape):
         pad_r, pad_c = self.padding

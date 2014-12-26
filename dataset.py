@@ -161,7 +161,7 @@ class BaseListDataset(Dataset):
         assert len(samples) > 0
         self.samples = samples
         self.labels = labels
-        self.sample_shape = list(self.samples[0].shape)
+        self.sample_shape = [self.samples[0].shape[2], self.samples[0].shape[0], self.samples[0].shape[1]]
         self.permutation = np.array(range(len(samples)))
 
     def shuffle(self, permutation):

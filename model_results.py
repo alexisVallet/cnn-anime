@@ -5,8 +5,12 @@ import cPickle as pickle
 import sys
 import numpy as np
 import cv2
+import theano
+import theano.tensor as T
+from theano.sandbox.cuda.dnn import dnn_pool
 
 from dataset import load_pixiv_1M, LazyIO, IdentityDataset
+from spp_prediction import spp_predict
 
 if __name__ == "__main__":
     if len(sys.argv) < 4:
@@ -36,29 +40,57 @@ if __name__ == "__main__":
     test_subset = IdentityDataset(samples, labels)
     int_to_label = classifier.named_conv.int_to_label
 
+    # Pooling fct
+    fmaps = T.tensor4('fmaps')
+    pool = lambda ws: theano.function(
+        [fmaps],
+        dnn_pool(fmaps, (ws, ws), (1,1), mode='average')
+    )
+
+    pyramid = [3,5,7,9,11,13,15]
+    # SPP prediction fct
+    pred = theano.function([fmaps], spp_predict(fmaps, pyramid))
+    
     for i, sample in enumerate(test_subset):
         # Run prediction
-        probas = classifier.predict_probas(IdentityDataset([sample], labels[i]))
-        sorted_labels = np.argsort(probas)
-        # Show the top 5 guesses.
-        top5ints = sorted_labels[0,::-1][0:5]
-        print "Predictions:"
-        for j in range(5):
-            print int_to_label[top5ints[j]] + ": " + repr(probas[0,top5ints[j]])
+        # Show confidence maps for top 5 guesses.
+        maps = classifier.compute_activations(14, IdentityDataset([sample], labels[i]))
+        # Multi-scale average pooling.
+        # 1 by 1 average pooling is just the original feature maps.
+        pooled_maps = np.array(maps, copy=True)
+        mrows, mcols = pooled_maps.shape[2:]
+        for wsize in pyramid:
+            pmap = pool(wsize)(maps)
+            # Resize to original scale via linear interpolation.
+            for j in range(115):
+                fmap = np.array(pmap[0,j],copy=True)
+                resized = cv2.resize(fmap, (mcols, mrows))
+                pooled_maps[0,j] += resized
+        pooled_maps /= 8.
+        label_map = np.argmax(pooled_maps[0], axis=0)
+        label_conf = np.max(pooled_maps[0], axis=0)
+        spatial_confs = np.zeros([115])
+        for j in range(mrows):
+            for k in range(mcols):
+                spatial_confs[label_map[j,k]] += label_conf[j,k]
+        spatial_confs /= mrows * mcols
+        remaining_labels = np.unique(label_map)
         print "Ground truth:"
         for l in labels[i]:
             print l
-        # Show confidence maps for top 5 guesses.
-        maps = classifier.compute_activations(13, IdentityDataset([sample], labels[i]))
-        max_activation = maps[0,top5ints].max()
-        for j in range(5):
-            map_image = cv2.GaussianBlur(maps[0,top5ints[j]], (5,5), 0)
-            map_image /= max_activation
-            map_image += 0.3
-            map_image /= map_image.max()
-            name = int_to_label[top5ints[j]].encode('utf-8')
-            cv2.namedWindow(name, cv2.WINDOW_NORMAL)
-            cv2.imshow(name, map_image)
+        top_picks = filter(lambda l: l in remaining_labels, np.argsort(spatial_confs)[::-1])
+        print "Spatially-corrected predictions:"
+        for j in range(min(len(top_picks), 5)):
+            print int_to_label[top_picks[j]] + ": " + repr(spatial_confs[top_picks[j]])
+        # Pure theano version:
+        th_confs = pred(maps)
+        print "Theano version:"
+        print th_confs.min()
+        print th_confs.max()
+        for il in np.argsort(th_confs[0])[::-1][0:5]:
+            print int_to_label[il] + ": " + repr(th_confs[0,il])
+        cv2.namedWindow('label confidence map', cv2.WINDOW_NORMAL)
+        cv2.imshow('label confidence map', label_conf / label_conf.max())
         cv2.imshow('image', np.rollaxis(samples[i], 0, 3))
         cv2.waitKey(0)
         cv2.destroyAllWindows()

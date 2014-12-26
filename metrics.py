@@ -33,8 +33,7 @@ def multi_label_precision(expected, predicted):
 
     for i in range(nb_samples):
         if len(predicted[i]) > 0:
-            total += (float(len(expected[i].intersection(predicted[i])))
-                      / len(predicted[i]))
+            total += (float(len(expected[i].intersection(predicted[i]))) / len(predicted[i]))
 
     return total / nb_samples
 

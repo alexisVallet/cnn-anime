@@ -8,10 +8,14 @@
 import numpy as np
 import itertools
 from random import shuffle
+import theano
+import theano.tensor as T
 
 from metrics import hamming_score
 from preprocessing import NameLabels
 from dataset import mini_batch_split, IdentityDataset
+from spp_prediction import spp_predict
+from threshold import learn_threshold
 
 class ClassifierMixin:    
     def train_named(self, train_samples, valid_samples=None):
@@ -101,6 +105,19 @@ class ClassifierMixin:
         
         return map(lambda f: f(expected, predicted), metrics)
 
+    def spp_metrics_named(self, test_samples, layer_number, method, top1, pyramid,
+                          metrics=[hamming_score]):
+        """ Compute multi label accuracy, given a classifier that actually only
+            outputs one (weird I know).
+        """
+        expected = map(
+            lambda l: l if isinstance(l, frozenset) else frozenset([l]),
+            test_samples.get_labels()
+        )
+        predicted = self.spp_predict_labels_named(layer_number, test_samples, method, top1, pyramid)
+        
+        return map(lambda f: f(expected, predicted), metrics)
+
     def confidences(self, test_samples, batch_size=30):
         # Compute the confidence scores batch by batch.
         splits = mini_batch_split(test_samples, batch_size)
@@ -136,3 +153,30 @@ class ClassifierMixin:
             conf_dict[self.named_conv.int_to_label[i]] = confidence_mat[:,i]
 
         return conf_dict
+
+    def spp_predict_labels_named(self, layer_number, test_set, method, top1, pyramid):
+        w, b = (None, None)
+        if method[0] == 'lin-thresh':
+            valid_set, metric = method[1:]
+            valid_confs = self.spp_predict_confs(layer_number, valid_set, pyramid)
+            valid_labels = map(lambda ls: frozenset(map(lambda l: self.named_conv.label_to_int[l], ls)), valid_set.get_labels())
+            w, b = learn_threshold(valid_confs, valid_labels, metric)
+        confs = self.spp_predict_confs(layer_number, test_set, pyramid)
+        labels = []
+        nb_samples, nb_labels = confs.shape
+
+        for i in range(nb_samples):
+            s_labels = []
+            for j in range(nb_labels):
+                if method[0] == 'lin-thresh':
+                    threshold = np.dot(confs[i], w) + b
+                    if confs[i,j] >= threshold:
+                        s_labels.append(self.named_conv.int_to_label[j])
+                elif method[0] == 'threshold':
+                    threshold = method[1]
+                    if confs[i,j] >= threshold:
+                        s_labels.append(self.named_conv.int_to_label[j])
+                if top1 and s_labels == []: # Always at least the top-1 choice
+                    s_labels.append(self.named_conv.int_to_label[np.argmax(confs[i])])
+            labels.append(frozenset(s_labels))
+        return labels

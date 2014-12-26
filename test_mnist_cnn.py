@@ -77,7 +77,8 @@ class TestMNIST(unittest.TestCase):
                 verbose=1
             ),
             srng=RandomStreams(seed=156736127),
-            l2_reg=0.0005,
+            l2_reg=0,
+            orth_penalty=0,
             input_shape=[1,24,24],
             init='random',
             cost='mlr',
