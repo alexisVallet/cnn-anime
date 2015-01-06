@@ -41,7 +41,6 @@ class BaseCNNClassifier:
                     stride_r: ,
                     stride_c:
                   })
-                - 'avg-pool'
                 - ('fc', {
                     nb_units: ,
                     init_std: , defaults to 0.01
@@ -259,11 +258,6 @@ class BaseCNNClassifier:
                 layers.append(layer_arch)
                 nb_fc += 1
                 current_input_shape = layer_arch.output_shape(current_input_shape)
-            elif layer_arch == 'avg-pool':
-                layer = AveragePoolLayer()
-                current_input_shape = layer.output_shape(current_input_shape)
-                layers.append(layer)
-                nb_conv_mp += 1
             elif layer_arch[0] == 'conv':
                 input_dim = current_input_shape[0]
                 p = layer_arch[1]
@@ -468,7 +462,7 @@ class BaseCNNClassifier:
         images = T.tensor4('images')
         f_predict = theano.function(
             [images],
-            spp_predict(self.model.compute_activations(14, images, test=True), pyramid)
+            spp_predict(self.model.compute_activations(layer_number, images, test=True), pyramid)
         )
         
         for i, sample in enumerate(pp_images):
@@ -529,16 +523,14 @@ class CNN:
             A symbolic (nb_images, nb_classes) matrix containing the output
             probabilities of the convnet classifier.
         """
-        return self.compute_activations(len(self.layers), batch, test=test)
+        return self.compute_activations(len(self.layers) - 1, batch, test=test)
 
     def compute_activations(self, layer_number, batch, test=False):
         # First accumulate the convolutional layer forward passes.
         fpass = batch
-        i = 0
-
-        while (i < layer_number):
+        
+        for i in range(layer_number + 1):
             fpass = self.layers[i].forward_pass(fpass)
-            i += 1
 
         return fpass
     

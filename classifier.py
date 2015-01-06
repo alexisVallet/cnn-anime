@@ -156,11 +156,16 @@ class ClassifierMixin:
 
     def spp_predict_labels_named(self, layer_number, test_set, method, top1, pyramid):
         w, b = (None, None)
+        
         if method[0] == 'lin-thresh':
-            valid_set, metric = method[1:]
-            valid_confs = self.spp_predict_confs(layer_number, valid_set, pyramid)
-            valid_labels = map(lambda ls: frozenset(map(lambda l: self.named_conv.label_to_int[l], ls)), valid_set.get_labels())
-            w, b = learn_threshold(valid_confs, valid_labels, metric)
+            if not hasattr(self, 'lin_thresh'):
+                valid_set, metric = method[1:]
+                valid_confs = self.spp_predict_confs(layer_number, valid_set, pyramid)
+                valid_labels = map(lambda ls: frozenset(map(lambda l: self.named_conv.label_to_int[l], ls)), valid_set.get_labels())
+                w, b = learn_threshold(valid_confs, valid_labels, metric)
+                self.lin_thresh = (w, b)
+            else:
+                w, b = self.lin_thresh
         confs = self.spp_predict_confs(layer_number, test_set, pyramid)
         labels = []
         nb_samples, nb_labels = confs.shape
