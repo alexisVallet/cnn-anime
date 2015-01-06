@@ -283,8 +283,8 @@ class NameLabels(DatasetTransformer):
 
 def random_patch(p_rows, p_cols, image):
     rows, cols = image.shape[1:]
-    p_i = np.random.randint(0, rows - p_rows)
-    p_j = np.random.randint(0, cols - p_cols)
+    p_i = np.random.randint(0, max(1, rows - p_rows))
+    p_j = np.random.randint(0, max(1, cols - p_cols))
 
     return image[:, p_i:p_i+p_rows, p_j:p_j+p_cols]
 

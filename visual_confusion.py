@@ -10,46 +10,32 @@ from dataset import load_pixiv_1M, LazyIO
 
 if __name__ == "__main__":
     if len(sys.argv) < 6:
-        raise ValueError("Please input an images folder, test set, results file, label name and output folder.")
+        raise ValueError("Please input an images folder, results file, label name and output folder.")
     img_folder = sys.argv[1]
-    test_set = load_pixiv_1M(
-        img_folder,
-        sys.argv[2],
-        LazyIO
-    )
-    results = pickle.load(open(sys.argv[3], 'rb'))
-    char = sys.argv[4].decode('utf-8')
-    out_folder = sys.argv[5]
+    results = pickle.load(open(sys.argv[2], 'rb'))
+    char = sys.argv[3].decode('utf-8')
+    out_folder = sys.argv[4]
     # Sort out all the TP, FP and FN
     true_positives = {}
     false_positives = {}
     false_negatives = {}
-    fnames = test_set.filenames
-    ground_truth = test_set.get_labels()
+    fnames = results.fnames
+    ground_truth = results.ground_truth
+    predicted = results.predicted
+    nb_samples = len(fnames)
     
-    for i in range(len(test_set)):
-        max_conf = -5000
-        max_conf_label = None
-        confidence = {}
-
-        for label in results:
-            confidence[label] = results[label][i]
-            if results[label][i] > max_conf:
-                max_conf = results[label][i]
-                max_conf_label = label
-        predicted = max_conf_label
-        
-        if char == predicted and char in ground_truth[i]:
+    for i in range(nb_samples):        
+        if char in predicted[i] and char in ground_truth[i]:
             true_positives[fnames[i]] = {
                 'confidence': confidence,
                 'ground_truth': ground_truth[i]
             }
-        elif char == predicted and char not in ground_truth[i]:
+        elif char in predicted[i] and char not in ground_truth[i]:
             false_positives[fnames[i]] = {
                 'confidence': confidence,
                 'ground_truth': ground_truth[i]
             }
-        elif char != predicted and char in ground_truth[i]:
+        elif char not in predicted[i] and char in ground_truth[i]:
             false_negatives[fnames[i]] = {
                 'confidence': confidence,
                 'ground_truth': ground_truth[i]
