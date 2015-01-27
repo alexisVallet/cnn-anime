@@ -33,9 +33,11 @@ class BaseCNNClassifier:
                     stride_r: ,  defaults to 1
                     stride_c: ,  defaults to 1
                     padding: , defaults to (0,0)
-                    init_bias:  defaults to 0
+                    init_bias: , defaults to 0
+                    non_lin: ', one of 'relu' or None
                   })
-                - ('max-pool', {
+                - ('pool', {
+                    type: 'max' or 'average',
                     rows: ,
                     cols: ,
                     stride_r: ,
@@ -50,7 +52,8 @@ class BaseCNNClassifier:
                     nb_outputs: ,
                     init_bias:
                   })
-                - ('dropout', dropout_proba)                
+                - ('dropout', dropout_proba)
+                - ('spp', pyramid)
                 - Pre-trained layers, as instances of the Layer class.
             optimizer
                 optimization method to use for training the network. Should be
@@ -90,7 +93,6 @@ class BaseCNNClassifier:
         self.init = init
         self.cost = cost
         self.l2_reg = l2_reg
-        self.orth_penalty = orth_penalty
         self.preprocessing = preprocessing
         self.verbose = verbose
         self.model = None
@@ -106,7 +108,8 @@ class BaseCNNClassifier:
         (self.architecture, self.optimizer, self.input_shape, self.srng, self.init,
          self.cost, self.l2_reg, self.preprocessing, self.verbose, self.model,
          self.named_conv) = state
-        self.compile_prediction()
+        if self.model != None:
+            self.compile_prediction()
         self.loaded = True
     
     def compile_prediction(self):
@@ -125,7 +128,7 @@ class BaseCNNClassifier:
         if self.verbose:
             print "Initializing weights..."
         # If loaded from a file, use the already initialized weights.
-        if not self.loaded:
+        if True:#not self.loaded:
             if self.init in ['random', 'orth']:
                 self.model = self.init_random()
             else:
@@ -250,7 +253,7 @@ class BaseCNNClassifier:
         for layer_arch in self.architecture:
             # Pre-trained layers.
             if np.any([isinstance(layer_arch, c) for c in
-                       [MaxPoolLayer, ConvLayer, AveragePoolLayer]]):
+                       [PoolLayer, ConvLayer, AveragePoolLayer]]):
                 layers.append(layer_arch)
                 nb_conv_mp += 1
                 current_input_shape = layer_arch.output_shape(current_input_shape)
@@ -258,10 +261,19 @@ class BaseCNNClassifier:
                 layers.append(layer_arch)
                 nb_fc += 1
                 current_input_shape = layer_arch.output_shape(current_input_shape)
+            elif layer_arch == 'avg-pool':
+                layer = AveragePoolLayer()
+                layers.append(layer)
+                current_input_shape = layer.output_shape(current_input_shape)
+                nb_fc += 1
+            elif layer_arch[0] == 'spp':
+                layer = SPPLayer(layer_arch[1])
+                layers.append(layer)
+                current_input_shape = layer.output_shape(current_input_shape)
             elif layer_arch[0] == 'conv':
                 input_dim = current_input_shape[0]
                 p = layer_arch[1]
-                nb_filters, nb_rows, nb_cols, stride_r, stride_c, std, bias, padding = (
+                nb_filters, nb_rows, nb_cols, stride_r, stride_c, std, bias, padding, nonlin = (
                     p['nb_filters'],
                     p['rows'],
                     p['cols'],
@@ -269,16 +281,17 @@ class BaseCNNClassifier:
                     p['stride_c'] if 'stride_c' in p else 1,
                     p['init_std'] if 'init_std' in p else 0.01,
                     p['init_bias'] if 'init_bias' in p else 0.,
-                    p['padding'] if 'padding' in p else (0,0)
+                    p['padding'] if 'padding' in p else (0,0),
+                    p['non_lin'] if 'non_lin' in p else 'relu'
                 )
                 in_pool_size = 1.
                 if i > 0 and self.architecture[i-1][0] == 'dropout':
                     in_pool_size = 1. / (1 - self.architecture[i-1][1])
                 fan_in = nb_rows * nb_cols * input_dim / in_pool_size
                 pool_size = None
-                if self.architecture[i+1] == 'avg-pool':
+                if self.architecture[i+1] in ['avg-pool', 'spp']:
                     pool_size = nb_rows * nb_cols
-                elif self.architecture[i+1][0] == 'max-pool':
+                elif self.architecture[i+1][0] == 'pool':
                     pool_size = self.architecture[i+1][1]['stride_r'] * self.architecture[i+1][1]['stride_c']
                 elif self.architecture[i+1][0] == 'dropout':
                     pool_size = 1. / (1 - self.architecture[i+1][1])
@@ -313,7 +326,8 @@ class BaseCNNClassifier:
                     filters,
                     biases,
                     (stride_r, stride_c),
-                    padding
+                    padding,
+                    nonlin
                 )
                 layers.append(layer)
                 nb_conv_mp += 1
@@ -321,15 +335,16 @@ class BaseCNNClassifier:
                 if self.verbose:
                     print "Output of C" + repr(nb_conv_mp) + ": " + repr(current_input_shape)
                     print "fan_in: " + repr(fan_in) + ", fan_out: " + repr(fan_out)
-            elif layer_arch[0] == 'max-pool':
+            elif layer_arch[0] == 'pool':
                 # Max pooling layers leave the input dimension unchanged.
-                rows, cols, stride_r, stride_c = (
+                pool_type, rows, cols, stride_r, stride_c = (
+                    layer_arch[1]['type'],
                     layer_arch[1]['rows'],
                     layer_arch[1]['cols'],
                     layer_arch[1]['stride_r'],
                     layer_arch[1]['stride_c']
                 )
-                layer = MaxPoolLayer((rows, cols), (stride_r, stride_c))
+                layer = PoolLayer(pool_type, (rows, cols), (stride_r, stride_c))
                 layers.append(layer)
                 nb_conv_mp += 1
                 current_input_shape = layer.output_shape(current_input_shape)
@@ -423,7 +438,7 @@ class BaseCNNClassifier:
             layers,
             np.prod(current_input_shape),
             self.l2_reg,
-            self.orth_penalty,
+            0,
             cost = self.cost
         )
 
@@ -757,7 +772,8 @@ class ConvLayer(Layer):
     """ Convolutional layer with ReLU non-linearity and max-pooling.
     """
     
-    def __init__(self, name, init_filters, init_biases, pooling=(1,1), padding=(0,0)):
+    def __init__(self, name, init_filters, init_biases, pooling=(1,1), padding=(0,0),
+                 nonlin='relu'):
         """ Initializes a convolutional layer with a set of initial filters and 
             biases.
 
@@ -782,6 +798,7 @@ class ConvLayer(Layer):
         self.pooling = pooling
         self.padding = padding
         self.name = name
+        self.nonlin = nonlin
         
     def forward_pass(self, fmaps):
         # Computes the raw convolution output, depending on the desired
@@ -793,13 +810,16 @@ class ConvLayer(Layer):
             subsample=self.pooling
         )
         nb_filters = self.filters_shape[0]
-        # Add biases and apply ReLU non-linearity.
-        relu_fmaps = T.maximum(
-            0, 
-            out_fmaps +  T.addbroadcast(self.biases, 0, 2, 3)
-        )
-        return relu_fmaps
-
+        if self.nonlin == 'relu':
+            # Add biases and apply ReLU non-linearity.
+            relu_fmaps = T.maximum(
+                0, 
+                out_fmaps +  T.addbroadcast(self.biases, 0, 2, 3)
+            )
+            return relu_fmaps
+        elif self.nonlin == None:
+            # No non-linearity.
+            return out_fmaps +  T.addbroadcast(self.biases, 0, 2, 3)
             
     def parameters(self):
         return [self.filters, self.biases]
@@ -826,28 +846,29 @@ class ConvLayer(Layer):
 
     def __getstate__(self):
         return (self.filters.get_value(), self.biases.get_value(), self.filters_shape,
-                self.padding, self.pooling, self.name)
+                self.padding, self.pooling, self.name, self.nonlin)
 
     def __setstate__(self, state):
-        filters, biases, self.filters_shape, self.padding, self.pooling, self.name = state
+        filters, biases, self.filters_shape, self.padding, self.pooling, self.name, self.nonlin = state
         self.filters = theano.shared(filters, self.name+'_W')
         self.biases = theano.shared(biases, self.name+'_b')
     
-class MaxPoolLayer(Layer):
+class PoolLayer(Layer):
     """ Non-overlapping max pooling layer.
     """
-    def __init__(self, pooling_size, stride):
+    def __init__(self, pool_type, pooling_size, stride):
         """ Initialize a max-pooling layer with a given pooling window size.
 
         Arguments:
             pooling_size
                 size of the max pooling window.
         """
+        self.pool_type = pool_type
         self.pooling_size = pooling_size
         self.stride = stride
 
-    def forward_pass(self, fmaps):        
-        return dnn_pool(fmaps, self.pooling_size, self.stride)
+    def forward_pass(self, fmaps):
+        return dnn_pool(fmaps, self.pooling_size, self.stride, mode=self.pool_type)
 
     def parameters(self):
         return []
@@ -897,3 +918,22 @@ class NoTraining(Layer):
 
     def output_shape(self, input_shape):
         return self.layer.output_shape(input_shape)
+
+class SPPLayer(Layer):
+    """ Spatial pyramid pooling + spatial label pruning.
+    """
+    def __init__(self, pyramid):
+        self.pyramid = pyramid
+
+    def forward_pass(self, batch):
+        return spp_predict(batch, self.pyramid)
+
+    def parameters(self):
+        return []
+
+    def output_shape(self, input_shape):
+        return [
+            input_shape[0],
+            1,
+            1
+        ]

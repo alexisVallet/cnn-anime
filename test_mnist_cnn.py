@@ -50,36 +50,48 @@ class TestMNIST(unittest.TestCase):
         print "Initializing classifier..."
         preprocessing = [
             MeanSubtraction(1),
-            RandomPatch(1, 24, 24, ('random_subwin', 10))
+            RandomPatch(1, 28, 28, ('random_subwin', 10))
         ]
-        batch_size = 64
+        batch_size = 128
         classifier = CNNClassifier(
             architecture=[
-                ('conv', {'nb_filters': 8, 'rows': 5, 'cols': 5}),
-                ('max-pool', {'rows': 2, 'cols': 2, 'stride_r': 2, 'stride_c': 2}),
-                ('conv', {'nb_filters': 16, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
-                ('max-pool', {'rows': 2, 'cols': 2, 'stride_r': 2, 'stride_c': 2}),
-                ('conv', {'nb_filters': 128, 'rows': 3, 'cols': 3, 'init_bias': 1.}),
-                ('max-pool', {'rows': 2, 'cols': 2, 'stride_r': 2, 'stride_c': 2}),
-                ('fc', {'nb_units': 2048, 'init_bias': 1.}),
-                ('dropout', 0.5),
-                ('linear', {
-                    'nb_outputs': 10
-                })
+                ('conv', {'nb_filters': 32, 'rows': 3, 'cols': 3,
+                          'padding': (1,1), 'non_lin': None}),
+                ('conv', {'nb_filters': 32, 'rows': 3, 'cols': 3,
+                          'padding': (1,1), 'non_lin': None}),
+                ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2.}),
+                ('conv', {'nb_filters': 64, 'rows': 3, 'cols': 3,
+                          'padding': (1,1), 'non_lin': None}),
+                ('conv', {'nb_filters': 64, 'rows': 3, 'cols': 3,
+                          'padding': (1,1), 'non_lin': None}),
+                ('conv', {'nb_filters': 64, 'rows': 3, 'cols': 3,
+                          'padding': (1,1), 'non_lin': None}),
+                ('max-pool', {'rows': 3, 'cols': 3, 'stride_r': 2, 'stride_c': 2.}),
+                ('conv', {'nb_filters': 128, 'rows': 3, 'cols': 3,
+                          'padding': (1,1), 'non_lin': None}),
+                ('conv', {'nb_filters': 128, 'rows': 3, 'cols': 3,
+                          'padding': (1,1), 'non_lin': None}),
+                ('conv', {'nb_filters': 128, 'rows': 3, 'cols': 3,
+                          'padding': (1,1), 'non_lin': None}),
+                ('conv', {'nb_filters': 128, 'rows': 3, 'cols': 3,
+                          'padding': (1,1), 'non_lin': None}),
+                ('conv', {'nb_filters': 10, 'rows': 3, 'cols': 3, 'padding': (1,1),
+                          'non_lin': None}),
+                'avg-pool'
             ],
             optimizer=SGD(
                 batch_size=batch_size,
                 init_rate=0.001,
                 nb_epochs=10,
                 learning_schedule=('decay', 0.9, 10),
-                update_rule=('momentum', 0.9),
+                update_rule=('rmsprop', 0.9, 0.01),
                 pickle_schedule=(10, 'data/mnist/models/test_model'),
-                verbose=1
+                verbose=2
             ),
             srng=RandomStreams(seed=156736127),
             l2_reg=0,
             orth_penalty=0,
-            input_shape=[1,24,24],
+            input_shape=[1,28,28],
             init='random',
             cost='mlr',
             preprocessing=preprocessing,

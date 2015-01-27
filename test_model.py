@@ -33,14 +33,12 @@ if __name__ == "__main__":
     print "Predicting..."
     accuracy, recall, precision = classifier.spp_metrics_named(
         test_data,
-        layer_number=13,
+        layer_number=16,
         method=('lin-thresh', valid_data, hamming_score),
         top1=True,
-        pyramid=[3,5,7,9,11,13,15],
+        pyramid=[2,3,4,5,6,7],
         metrics=[hamming_score, multi_label_recall, multi_label_precision]
     )
-    pickle.dump(classifier, open(model_file + "_linthresh.pkl", 'wb'))
     print "Accuracy: " + repr(accuracy)
     print "Recall: " + repr(recall)
     print "Precision: " + repr(precision)
-    
