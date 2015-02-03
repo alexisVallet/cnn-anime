@@ -34,7 +34,7 @@ class TestPixiv(unittest.TestCase):
     def test_pixiv(self):
         print "Initializing classifier..."
 
-        batch_size = 128
+        # batch_size = 96
         # classifier = CNNClassifier(
         #     architecture=[
         #         ('conv', {'nb_filters': 64, 'rows': 7, 'cols': 7, 'padding': (3, 3),
@@ -90,7 +90,6 @@ class TestPixiv(unittest.TestCase):
         #     ),
         #     srng=RandomStreams(seed=156736127),
         #     l2_reg = 0,
-        #     orth_penalty = 0,
         #     input_shape=[3,256,256],
         #     init='random',
         #     cost='mlr',
@@ -101,7 +100,16 @@ class TestPixiv(unittest.TestCase):
         #     ],
         #     verbose=True
         # )
-        classifier = pickle.load(open('data/pixiv-115/models/gap15/gap15_dropout_27_backup.pkl', 'rb'))
+        classifier = pickle.load(open('data/pixiv-115/models/gap15/gap15_dropout_50_backup.pkl', 'rb'))
+        classifier.architecture = classifier.architecture[0:20] + [
+            ('fc', {'nb_units': 4096, 'init_bias': 1.}),
+            ('dropout', 0.5),
+            ('fc', {'nb_units': 4096, 'init_bias': 1.}),
+            ('dropout', 0.5),
+            ('fc', {'nb_units': 115})
+        ]
+        classifier.init_model()
+        classifier.optimizer.batch_size = 128
         print "Training..."
         classifier.train_named(self.train_data, self.valid_data)
         print "Predicting..."

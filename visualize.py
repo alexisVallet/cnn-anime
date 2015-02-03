@@ -33,19 +33,26 @@ if __name__ == "__main__":
     for i in range(50):
         samples.append(samples_iter.next())
     test_subset = IdentityDataset(samples, labels)
+    test_subset.shuffle(np.random.permutation(len(test_subset)))
 
     # Compute activations, show the highest max-response feature maps for
     # each filter.
-    activations = classifier.compute_activations(layer_number, test_subset)
-    batch_size, nb_filters, rows, cols = activations.shape
-    cv2.namedWindow('feature map', cv2.WINDOW_NORMAL)
 
-    for i in range(nb_filters):
-        print "Filter " + repr(i)
-        for j in range(10):
-            # Display the corresponding maps and images of randomly selected images.
-            chosen_idx = np.random.randint(len(samples) * 10)
-            fmap = activations[chosen_idx, i]
-            cv2.imshow('feature map', fmap / fmap.max())
-            cv2.imshow('image', np.rollaxis(samples[chosen_idx / 10], 0, 3))
-            cv2.waitKey(0)
+    for sample in test_subset:
+        # Display the corresponding maps and images of randomly selected images.
+        fmaps = classifier.compute_activations(
+            layer_number,
+            IdentityDataset([sample], [frozenset()])
+        )
+        print fmaps.shape
+        # Look a the top 5:
+        top5 = fmaps.mean(axis=2).mean(axis=2).flatten().argsort()[::-1][0:5]
+        cv2.imshow('image', np.rollaxis(sample, 0, 3))
+        for i in top5:
+            fmap = fmaps[0,i]
+            print repr(i) + ": " + classifier.named_conv.int_to_label[i]
+            cv2.namedWindow('feature map ' + repr(i), cv2.WINDOW_NORMAL)
+            cv2.imshow('feature map ' + repr(i), 1 - (fmap - fmap.min()) / (fmap.max() - fmap.min()))
+            print (fmap.min(), fmap.mean(), fmap.max())
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()

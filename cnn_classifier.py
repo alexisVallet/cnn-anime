@@ -10,15 +10,16 @@ from sklearn.cluster import KMeans
 import copy
 
 from classifier import ClassifierMixin
-from dataset import IdentityDataset
+from dataset import IdentityDataset, mini_batch_split
 from spp_prediction import spp_predict
+from threshold import learn_threshold
 
 class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
     """
     def __init__(self, architecture, optimizer, input_shape,
-                 srng, init='random', cost='mlr', l2_reg=0, orth_penalty=0,
-                 preprocessing=[], verbose=False):
+                 srng, init='random', cost='mlr', l2_reg=0,
+                 preprocessing=[], named_conv=None, lin_thresh=None, verbose=False):
         """ Initializes a convolutional neural network with a specific
             architecture, optimization method for training and 
             initialization procedure.
@@ -95,22 +96,32 @@ class BaseCNNClassifier:
         self.l2_reg = l2_reg
         self.preprocessing = preprocessing
         self.verbose = verbose
-        self.model = None
-        self.named_conv = None
-        self.loaded = False
+        self.named_conv = named_conv
+        self.lin_thresh = lin_thresh
+        self.init_model()
 
+    def init_model(self):
+        if self.verbose:
+            print "Initializing weights..."
+        # If loaded from a file, use the already initialized weights.
+        if self.init in ['random', 'orth']:
+            self.model = self.init_random()
+            self.architecture = self.model.layers
+        else:
+            raise ValueError(repr(self.init) + 
+                             " is not a valid initialization method.")
+        self.compile_prediction()
+        
     def __getstate__(self):        
         return (self.architecture, self.optimizer, self.input_shape, self.srng, self.init,
                 self.cost, self.l2_reg, self.preprocessing, self.verbose, self.model,
-                self.named_conv)
+                self.named_conv, self.lin_thresh)
 
     def __setstate__(self, state):
         (self.architecture, self.optimizer, self.input_shape, self.srng, self.init,
          self.cost, self.l2_reg, self.preprocessing, self.verbose, self.model,
-         self.named_conv) = state
-        if self.model != None:
-            self.compile_prediction()
-        self.loaded = True
+         self.named_conv, self.lin_thresh) = state
+        self.init_model()
     
     def compile_prediction(self):
         # Compile the CNN prediction functions.
@@ -125,16 +136,6 @@ class BaseCNNClassifier:
     def train(self, dataset, valid_data=None):
         # Use theano's FFT convolutions.
         # Initialize the CNN with the desired method.
-        if self.verbose:
-            print "Initializing weights..."
-        # If loaded from a file, use the already initialized weights.
-        if True:#not self.loaded:
-            if self.init in ['random', 'orth']:
-                self.model = self.init_random()
-            else:
-                raise ValueError(repr(self.init) + 
-                                " is not a valid initialization method.")
-        self.compile_prediction()
         # Run the preprocessing pipeline.
         if self.verbose:
             print "Preprocessing..."
@@ -170,6 +171,8 @@ class BaseCNNClassifier:
 
         # Run prediction.
         probas = self._predict_proba(pp_images.to_array())
+        if len(probas.shape) == 4:
+            probas = probas.reshape([probas.shape[0], probas.shape[1]])
 
         # Then convert the probabilities (for instance averageing when
         # samples were duplicated, etc).
@@ -178,7 +181,36 @@ class BaseCNNClassifier:
 
         return probas
 
-    def predict_labels(self, images, method='top-1', confidence=False):
+    def predict_probas_batched(self, test_set, batch_size=1):
+        splits = mini_batch_split(test_set, batch_size)
+        nb_batches = splits.size - 1
+        samples_it = iter(test_set)
+        probas = None
+        offset = 0
+
+        for i in range(nb_batches):
+            cur_batch_size = splits[i+1] - splits[i]
+            batch = []
+            batch_labels = [frozenset([])] * cur_batch_size
+            for j in range(cur_batch_size):
+                batch.append(samples_it.next())
+            batch_probas = self.predict_probas(self.named_conv.test_data_transform(
+                IdentityDataset(batch, batch_labels)
+            ))
+            if probas == None:
+                probas = np.empty([len(test_set), batch_probas.shape[1]])
+            probas[offset:offset+cur_batch_size] = batch_probas
+            offset += cur_batch_size
+        return probas
+    
+    def learn_mlabel_threshold(self, train_set, batch_size=1):
+        """ Learns a linear threshold function for multi-label prediction.
+        """
+        train_labels = map(lambda ls: frozenset(map(lambda l: self.named_conv.label_to_int[l], ls)), train_set.get_labels())
+        train_confs = self.predict_probas_batched(train_set, batch_size)
+        self.lin_thresh = learn_threshold(train_confs, train_labels)
+    
+    def predict_labels(self, images, method='top-1', batch_size=1):
         """ Predicts the label sets for a number of images.
 
         Arguments:
@@ -194,38 +226,33 @@ class BaseCNNClassifier:
                 Set to true to return (label, confidence) pairs instead of just labels.
         """
         if method == 'top-1':
-            probas = self.predict_probas(images)
+            probas = self.predict_probas_batched(images, batch_size=batch_size)
             max_idxs = np.argmax(probas, axis=1)
             labels = []
             nb_samples, nb_classes = probas.shape
 
             for i in range(nb_samples):
-                if confidence:
-                    labels.append(frozenset([(max_idxs[i], probas[i,max_idxs[i]])]))
-                else:
-                    labels.append(frozenset([max_idxs[i]]))
+                labels.append(frozenset([max_idxs[i]]))
             return labels
-        elif method[0] == 'thresh':
-            t = method[1]
-            probas = self.predict_probas(images)
+        elif method == 'thresh':
+            probas = self.predict_probas_batched(images, batch_size=batch_size)
             nb_samples, nb_classes = probas.shape
             labels = []
+            # Compute thresholds
+            w, b = self.lin_thresh
+            t = np.dot(probas, w) + b
             
             for i in range(nb_samples):
                 labels_set = []
                 for j in range(nb_classes):
-                    if probas[i,j] > t:
-                        if confidence:
-                            labels_set.append((j, probas[i,j]))
-                        else:
-                            labels_set.append(j)
+                    if probas[i,j] > t[i]:
+                        labels_set.append(j)
                 if labels_set == []:
-                    if confidence:
-                        labels_set.append((np.argmax(probas[i]), np.max(probas[i])))
-                    else:
-                        labels_set.append(np.argmax(probas[i]))
+                    labels_set.append(np.argmax(probas[i]))
                 labels.append(frozenset(labels_set))
             return labels
+        else:
+            raise ValueError("Invalid prediction method: " + repr(method))
 
     def init_random(self):
         """ Initializes a convolutional neural network at random given an 
@@ -285,18 +312,18 @@ class BaseCNNClassifier:
                     p['non_lin'] if 'non_lin' in p else 'relu'
                 )
                 in_pool_size = 1.
-                if i > 0 and self.architecture[i-1][0] == 'dropout':
-                    in_pool_size = 1. / (1 - self.architecture[i-1][1])
+                if 0 < i < len(self.architecture)-1 and isinstance(self.architecture[i-1], tuple):
+                    if i > 0 and self.architecture[i-1][0] == 'dropout':
+                        in_pool_size = 1. / (1 - self.architecture[i-1][1])
                 fan_in = nb_rows * nb_cols * input_dim / in_pool_size
-                pool_size = None
-                if self.architecture[i+1] in ['avg-pool', 'spp']:
-                    pool_size = nb_rows * nb_cols
-                elif self.architecture[i+1][0] == 'pool':
-                    pool_size = self.architecture[i+1][1]['stride_r'] * self.architecture[i+1][1]['stride_c']
-                elif self.architecture[i+1][0] == 'dropout':
-                    pool_size = 1. / (1 - self.architecture[i+1][1])
-                else:
-                    pool_size = 1
+                pool_size = 1.
+                if isinstance(tuple, self.architecture[i-1]) and isinstance(self.architecture[i+1], tuple):
+                    if self.architecture[i+1] in ['avg-pool', 'spp']:
+                        pool_size = nb_rows * nb_cols
+                    elif self.architecture[i+1][0] == 'pool':
+                        pool_size = self.architecture[i+1][1]['stride_r'] * self.architecture[i+1][1]['stride_c']
+                    elif self.architecture[i+1][0] == 'dropout':
+                        pool_size = 1. / (1 - self.architecture[i+1][1])
                 fan_out = float(nb_filters * nb_rows * nb_cols) / pool_size
                 filters = None
                 biases = bias * np.ones(
@@ -363,15 +390,16 @@ class BaseCNNClassifier:
                 prob_alive_out = 1.
                 # If dropout after, the fan out is effectively multiplied by the probability of
                 # the unit being alive in the first place. Same for the fan in.
-                if isinstance(self.architecture[i-1], DropoutLayer):
-                    prob_alive_in = 1. - self.architecture[i-1].drop_proba
-                elif self.architecture[i-1][0] == 'dropout':
-                    prob_alive_in = 1. - self.architecture[i-1][1]
-                if isinstance(self.architecture[i+1], DropoutLayer):
-                    prob_alive_out = 1. - self.architecture[i+1].drop_proba
-                elif (isinstance(self.architecture[i+1], DropoutLayer)
+                if 0 < i < len(self.architecture)-1:
+                    if isinstance(self.architecture[i-1], DropoutLayer):
+                        prob_alive_in = 1. - self.architecture[i-1].drop_proba
+                    elif isinstance(self.architecture[i-1], tuple) and self.architecture[i-1][0] == 'dropout':
+                        prob_alive_in = 1. - self.architecture[i-1][1]
+                    if isinstance(self.architecture[i+1], DropoutLayer):
+                        prob_alive_out = 1. - self.architecture[i+1].drop_proba
+                    elif isinstance(self.architecture[i+1], tuple) and (isinstance(self.architecture[i+1], DropoutLayer)
                     or self.architecture[i+1][0] == 'dropout'):
-                    prob_alive_out = 1. - self.architecture[i+1][1]
+                        prob_alive_out = 1. - self.architecture[i+1][1]
                 weights = np.random.uniform(
                     -np.sqrt(6. / (nb_inputs * prob_alive_in + nb_units * prob_alive_out)),
                     np.sqrt(6. / (nb_inputs * prob_alive_in + nb_units * prob_alive_out)),
@@ -726,6 +754,22 @@ class LinearLayer(Layer):
         self.weights = theano.shared(weights, name=self.name+'_W')
         self.biases = theano.shared(biases, name=self.name+'_b')
 
+    def to_conv(self):
+        """ Converts this layer into a 1x1 convolutional layer with no
+            non-linearity that basically applies this linear layer
+            pixel-wise. Useful for producing confidence maps at prediction
+            time, when using a linear layer implementation over GAP
+            layers is best for training.
+        """
+        return ConvLayer(
+            self.name,
+            self.weights.get_value().T.reshape([self.nb_outputs, self.nb_inputs, 1, 1]),
+            self.biases.get_value().reshape([1, self.nb_outputs, 1, 1]),
+            pooling=(1,1),
+            padding=(0,0),
+            nonlin=None
+        )
+
 class FCLayer(Layer):
     """ Fully connected layer with ReLU non-linearity.
     """
@@ -768,6 +812,22 @@ class FCLayer(Layer):
         self.weights = theano.shared(weights, name=self.name+'_W')
         self.biases = theano.shared(biases, name=self.name+'_b')
 
+    def to_conv(self):
+        """ Converts this layer into a 1x1 convolutional layer with no
+            ReLU non-linearity that basically applies this FC layer
+            pixel-wise. Useful for producing confidence maps at prediction
+            time, when using a linear layer implementation over GAP
+            layers is best for training.
+        """
+        return ConvLayer(
+            self.name,
+            self.weights.get_value().T.reshape([self.nb_outputs, self.nb_inputs, 1, 1]),
+            self.biases.get_value().reshape([1, self.nb_outputs, 1, 1]),
+            pooling=(1,1),
+            padding=(0,0),
+            nonlin='relu'
+        )
+
 class ConvLayer(Layer):
     """ Convolutional layer with ReLU non-linearity and max-pooling.
     """
@@ -809,18 +869,18 @@ class ConvLayer(Layer):
             border_mode=self.padding,
             subsample=self.pooling
         )
-        nb_filters = self.filters_shape[0]
         if self.nonlin == 'relu':
             # Add biases and apply ReLU non-linearity.
             relu_fmaps = T.maximum(
                 0, 
-                out_fmaps +  T.addbroadcast(self.biases, 0, 2, 3)
+                out_fmaps + T.addbroadcast(self.biases, 0, 2, 3)
             )
             return relu_fmaps
         elif self.nonlin == None:
-            # No non-linearity.
-            return out_fmaps +  T.addbroadcast(self.biases, 0, 2, 3)
-            
+            return out_fmaps + T.addbroadcast(self.biases, 0, 2, 3)
+        else:
+            raise ValueError("Invalid non-linearity: " + repr(self.nonlin))            
+
     def parameters(self):
         return [self.filters, self.biases]
 
@@ -891,7 +951,7 @@ class AveragePoolLayer(Layer):
 
     def forward_pass(self, fmaps):
         # Computes the mean of each individual feature map.
-        return T.mean(fmaps, axis=[2,3])
+        return T.mean(fmaps, axis=[2,3], keepdims=True)
 
     def parameters(self):
         return []
