@@ -8,11 +8,24 @@ from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 import numpy as np
 from sklearn.cluster import KMeans
 import copy
+import cPickle as pickle
 
 from classifier import ClassifierMixin
 from dataset import IdentityDataset, mini_batch_split
 from spp_prediction import spp_predict
 from threshold import learn_threshold
+
+def loadcnn(filepath):
+    """ Dumb wrapper around pickle to go around restrictions.
+    """
+    cnn = None
+    with open(filepath, 'rb') as cnnfile:
+        cnn = pickle.load(cnnfile)
+    return cnn
+
+def dumpcnn(cnn, filepath):
+    with open(filepath, 'wb') as cnnfile:
+        pickle.dump(cnn, cnnfile, protocol=pickle.HIGHEST_PROTOCOL)
 
 class BaseCNNClassifier:
     """ Image classifier based on a convolutional neural network.
