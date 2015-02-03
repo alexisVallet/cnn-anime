@@ -10,7 +10,7 @@ from dataset import load_pixiv_1M, LazyIO
 
 if __name__ == "__main__":
     if len(sys.argv) < 6:
-        raise ValueError("Please input an images folder, results file, label name and output folder.")
+        raise ValueError("Please input an images folder, results file, and output folder.")
     img_folder = sys.argv[1]
     results = pickle.load(open(sys.argv[2], 'rb'))
     char = sys.argv[3].decode('utf-8')

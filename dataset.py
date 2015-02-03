@@ -271,7 +271,7 @@ class CompressedDataset(BaseCompressedDataset, DatasetMixin):
     pass
 
 def load_pixiv_1M(images_folder, set_pkl, dataset_class=LazyIO):
-    """ Loads a dataset in the pixiv-1M format as a LazyIO dataset with multi-labels.
+    """ Loas a dataset in the pixiv-1M format as a LazyIO dataset with multi-labels.
 
     Arguments:
         images_folder
