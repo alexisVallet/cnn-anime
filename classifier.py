@@ -24,20 +24,26 @@ class ClassifierMixin:
         int_valid = None if valid_samples == None else self.named_conv.test_data_transform(valid_samples)
         self.train(int_train, int_valid)
         
-    def predict_labels_named(self, test_samples, batch_size=1, method='top-1'):
+    def predict_labels_named(self, test_samples, batch_size=1, method='top-1', confidence=False):
         int_labels = self.predict_labels(
             self.named_conv.test_data_transform(
                 test_samples
             ),
             batch_size=batch_size,
-            method=method
-        )
-        
-        return map(
-            lambda ls: frozenset(map(lambda l: self.named_conv.int_to_label[l], ls)) if isinstance(ls, frozenset) else frozenset([self.named_conv.int_to_label[ls]]),
-            int_labels
+            method=method,
+            confidence=confidence
         )
 
+        if confidence:
+            return map(
+                lambda ls: frozenset(map(lambda l: (self.named_conv.int_to_label[l[0]],l[1]), ls)) if isinstance(ls, frozenset) else frozenset([(self.named_conv.int_to_label[ls[0]]), ls[1]]),
+                int_labels
+            )
+        else:
+            return map(
+                lambda ls: frozenset(map(lambda l: self.named_conv.int_to_label[l], ls)) if isinstance(ls, frozenset) else frozenset([self.named_conv.int_to_label[ls]]),
+                int_labels
+            )
     def top_accuracy(self, samples):
         """ Computes top-1 to to top-k accuracy of the classifier on test data,
             assuming it already has been trained, where k is the total number

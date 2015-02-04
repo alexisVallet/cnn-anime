@@ -1,4 +1,3 @@
-from batch_producer import batch_producer
 import multiprocessing as mp
 from multiprocessing.sharedctypes import RawValue, RawArray
 import theano
@@ -8,10 +7,10 @@ from numpy.ctypeslib import ndpointer
 import ctypes
 import time
 from collections import deque
-import matplotlib.pyplot as plt
 import cPickle as pickle
 
 from dataset import mini_batch_split
+from batch_producer import batch_producer
 
 class SGD:
     """ Implementation of stochastic gradient descent.
