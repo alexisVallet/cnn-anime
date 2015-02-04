@@ -1,12 +1,8 @@
 import theano
 import theano.tensor as T
-from theano.tensor.signal.downsample import max_pool_2d
-from pylearn2.sandbox.cuda_convnet.filter_acts import FilterActs
-from theano.sandbox.cuda.basic_ops import gpu_contiguous
-from theano.sandbox.cuda.dnn import dnn_conv, dnn_pool, GpuDnnSoftmax
+from theano.sandbox.cuda.dnn import dnn_conv, dnn_pool
 from theano.sandbox.rng_mrg import MRG_RandomStreams as RandomStreams
 import numpy as np
-from sklearn.cluster import KMeans
 import copy
 import cPickle as pickle
 
@@ -223,7 +219,7 @@ class BaseCNNClassifier:
         train_confs = self.predict_probas_batched(train_set, batch_size)
         self.lin_thresh = learn_threshold(train_confs, train_labels)
     
-    def predict_labels(self, images, method='top-1', batch_size=1):
+    def predict_labels(self, images, method='top-1', batch_size=1, confidence=False):
         """ Predicts the label sets for a number of images.
 
         Arguments:
@@ -245,7 +241,10 @@ class BaseCNNClassifier:
             nb_samples, nb_classes = probas.shape
 
             for i in range(nb_samples):
-                labels.append(frozenset([max_idxs[i]]))
+                if not confidence:
+                    labels.append(frozenset([max_idxs[i]]))
+                else:
+                    labels.append(frozenset([(max_idxs[i], probas[i, max_idxs[i]])]))
             return labels
         elif method == 'thresh':
             probas = self.predict_probas_batched(images, batch_size=batch_size)
@@ -259,9 +258,16 @@ class BaseCNNClassifier:
                 labels_set = []
                 for j in range(nb_classes):
                     if probas[i,j] > t[i]:
-                        labels_set.append(j)
+                        if not confidence:
+                            labels_set.append(j)
+                        else:
+                            labels_set.append((j, probas[i,j]))
                 if labels_set == []:
-                    labels_set.append(np.argmax(probas[i]))
+                    if not confidence:
+                        labels_set.append(np.argmax(probas[i]))
+                    else:
+                        topidx=np.argmax(probas[i])
+                        labels_set.append((topidx, probas[i,topidx]))
                 labels.append(frozenset(labels_set))
             return labels
         else:
