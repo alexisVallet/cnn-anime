@@ -3,7 +3,8 @@
     so they would stay picklable.
 """
 from dataset import Dataset, DatasetMixin
-import cv2
+from skimage.io import imread
+from skimage.transform import resize
 import numpy as np
 import os.path
 import cPickle as pickle
@@ -139,10 +140,9 @@ class BaseResizeSet(Dataset):
             else:
                 n_cols = int(round(self.min_dim * float(cols) / rows))
                 n_rows = self.min_dim
-            cv_resized = cv2.resize(
+            cv_resized = resize(
                 np.rollaxis(image, 0, 3),
-                (n_cols, n_rows),
-                interpolation=cv2.INTER_NEAREST
+                (n_cols, n_rows)
             )
             yield np.rollaxis(cv_resized, 2, 0)
 
@@ -181,7 +181,7 @@ def center_patch(patch_size, image):
         pad_top = (rows - cols) // 2
         patch =  image[:, pad_top:pad_top+cols, :]
     patch_resized = np.rollaxis(
-        cv2.resize(np.rollaxis(patch, 0, 3), (patch_size, patch_size)),
+        resize(np.rollaxis(patch, 0, 3), (patch_size, patch_size)),
         2,
         0
     )

@@ -1,4 +1,4 @@
-import cv2
+from skimage.io import imread
 import numpy as np
 import os, struct
 import os.path
@@ -206,8 +206,8 @@ class BaseLazyIO(Dataset):
                 self.folder,
                 self.filenames[self.permutation[i]]
             )
-            bgr_image = cv2.imread(full_fname)
-            if bgr_image == None:
+            bgr_image = imread(full_fname)
+            if bgr_image is None:
                 raise ValueError("Unable to load " + repr(full_fname))
             yield np.rollaxis(bgr_image.astype(np.float32), 2, 0) / 255
 
@@ -227,47 +227,6 @@ class BaseLazyIO(Dataset):
         return permut_labels
 
 class LazyIO(BaseLazyIO, DatasetMixin):
-    pass
-
-class BaseCompressedDataset(Dataset):
-    """ Datasets which loads the raw jpeg data in memory and uncompresses it on the fly.
-        Useful for datasets which fit in memory when compressed.
-    """
-    def __init__(self, folder, filenames, labels):
-        assert len(filenames) > 0
-        # Load the raw jpeg data.
-        self.jpeg_imgs = []
-        for fname in filenames:
-            with open(os.path.join(folder, fname), 'rb') as img_raw:
-                self.jpeg_imgs.append(
-                    np.fromfile(img_raw, np.uint8)
-                )
-        self.labels = labels
-        self.permutation = np.array(range(len(filenames)))
-        self.sample_shape = None
-
-    def __iter__(self):
-        for i in range(len(self)):
-            bgr_image = cv2.imdecode(self.jpeg_imgs[self.permutation[i]], 1)
-                
-            yield np.rollaxis(bgr_image.astype(np.float32), 2, 0) / 255
-
-    def __len__(self):
-        return self.permutation.size
-
-    def shuffle(self, permutation):
-        self.permutation = permutation
-
-    def get_labels(self):
-        # Apply the permutation to the labels.
-        permut_labels = []
-
-        for i in range(self.permutation.size):
-            permut_labels.append(self.labels[self.permutation[i]])
-        
-        return permut_labels
-
-class CompressedDataset(BaseCompressedDataset, DatasetMixin):
     pass
 
 def load_pixiv_1M(images_folder, set_pkl, dataset_class=LazyIO):
@@ -321,12 +280,12 @@ def load_da_180(images_folder):
                 images_folder,
                 name + '_' + chr(a_code + i) + '.png'
             )
-            a_image = cv2.imread(fname)
+            a_image = imread(fname)
             maskname = os.path.join(
                 images_folder,
                 name + '_' + chr(a_code + i) + '.png-mask.png'
             )
-            alpha_mask = 1 - (cv2.imread(maskname, cv2.CV_LOAD_IMAGE_GRAYSCALE).astype(np.float32) / 255)
+            alpha_mask = 1 - (imread(maskname, as_grey=True).astype(np.float32) / 255)
             rows, cols = a_image.shape[0:2]
             img = (alpha_mask.reshape([rows, cols, 1]) * a_image[:,:,0:3]).astype(np.uint8)
             images.append(img)
@@ -374,7 +333,7 @@ def load_da_1000(images_folder, bb_folder=None):
                     label + '_' + repr(j) + '.jpg'
                 )
                 if os.path.isfile(fname):
-                    image = cv2.imread(fname)
+                    image = imread(fname)
                     if bb_folder != None:
                         with open(os.path.join(bb_folder, label + '_' + repr(j) + '_bb.json')) as bbfile:
                             bbox = json.load(bbfile)

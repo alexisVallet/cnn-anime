@@ -2,7 +2,6 @@
     Designed to work with a global average pooled network.
 """
 import numpy as np
-import cv2
 import theano
 import theano.tensor as T
 from theano.sandbox.cuda.dnn import dnn_pool
