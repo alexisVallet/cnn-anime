@@ -4,7 +4,6 @@
 import numpy as np
 import theano
 import theano.tensor as T
-import cv2
 
 def resize(images, (out_rows, out_cols)):
     """ Theano symbolic image resizing with nearest neighbor interpolation.
