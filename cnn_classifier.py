@@ -336,7 +336,7 @@ class BaseCNNClassifier:
                         in_pool_size = 1. / (1 - self.architecture[i-1][1])
                 fan_in = nb_rows * nb_cols * input_dim / in_pool_size
                 pool_size = 1.
-                if isinstance(tuple, self.architecture[i-1]) and isinstance(self.architecture[i+1], tuple):
+                if isinstance(self.architecture[i-1], tuple) and isinstance(self.architecture[i+1], tuple):
                     if self.architecture[i+1] in ['avg-pool', 'spp']:
                         pool_size = nb_rows * nb_cols
                     elif self.architecture[i+1][0] == 'pool':
