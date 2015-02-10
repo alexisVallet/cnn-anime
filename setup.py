@@ -4,9 +4,6 @@ setup(
     name = "cnn_anime",
     version = "1.0",
     packages = find_packages(),
-    setup_requires=[
-        'six'
-    ],
     install_requires=[
         'numpy',
         'Pillow',
