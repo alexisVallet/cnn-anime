@@ -142,7 +142,7 @@ class BaseResizeSet(Dataset):
                 n_rows = self.min_dim
             cv_resized = resize(
                 np.rollaxis(image, 0, 3),
-                (n_cols, n_rows)
+                (n_rows, n_cols)
             )
             yield np.rollaxis(cv_resized, 2, 0)
 
