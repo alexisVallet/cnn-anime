@@ -170,7 +170,7 @@ class BaseListDataset(Dataset):
     def __iter__(self):
         for i in range(self.permutation.size):
             cv_img = self.samples[self.permutation[i]]
-            yield np.rollaxis(cv_img.astype(np.float32), 2, 0) / 255
+            yield np.rollaxis(cv_img.astype(np.float32), 2, 0) / 255.
 
     def __len__(self):
         return self.permutation.size
@@ -209,7 +209,7 @@ class BaseLazyIO(Dataset):
             bgr_image = imread(full_fname)
             if bgr_image is None:
                 raise ValueError("Unable to load " + repr(full_fname))
-            yield np.rollaxis(bgr_image.astype(np.float32), 2, 0) / 255
+            yield np.rollaxis(bgr_image.astype(np.float32), 2, 0)
 
     def __len__(self):
         return self.permutation.size
