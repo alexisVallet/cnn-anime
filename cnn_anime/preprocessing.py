@@ -143,7 +143,7 @@ class BaseResizeSet(Dataset):
             cv_resized = resize(
                 np.rollaxis(image, 0, 3),
                 (n_rows, n_cols)
-            )
+            ).astype(np.float32)
             yield np.rollaxis(cv_resized, 2, 0)
 
     def __len__(self):
@@ -181,7 +181,7 @@ def center_patch(patch_size, image):
         pad_top = (rows - cols) // 2
         patch =  image[:, pad_top:pad_top+cols, :]
     patch_resized = np.rollaxis(
-        resize(np.rollaxis(patch, 0, 3), (patch_size, patch_size)),
+        resize(np.rollaxis(patch, 0, 3), (patch_size, patch_size)).astype(np.float32),
         2,
         0
     )
