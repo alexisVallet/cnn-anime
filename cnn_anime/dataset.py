@@ -171,7 +171,6 @@ class BaseListDataset(Dataset):
         for i in range(self.permutation.size):
             cv_img = self.samples[self.permutation[i]]
             img = np.rollaxis(cv_img.astype(np.float32), 2, 0) / 255.
-            print (img.dtype, img.shape, img.min(), img.max(), img.mean())
             return img
 
     def __len__(self):
