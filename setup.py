@@ -8,6 +8,7 @@ setup(
         'numpy',
         'Pillow',
         'scikit-image',
+        'nose',
         'Theano'
     ],
     dependency_links=[
