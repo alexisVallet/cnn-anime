@@ -229,8 +229,7 @@ class BaseCNNClassifier:
                 method to use to find the labels set:
                 - top-1 just returns the one most probable label.
                 - ('thresh', t) thresholds the probabilities at t, i.e. all probabilities
-                  greater than t will be included in the labels set. If there are no such
-                  probabilities, then default to top-1.
+                  greater than t will be included in the labels set.
             confidence
                 Set to true to return (label, confidence) pairs instead of just labels.
         """
@@ -261,13 +260,7 @@ class BaseCNNClassifier:
                         if not confidence:
                             labels_set.append(j)
                         else:
-                            labels_set.append((j, probas[i,j]))
-                if labels_set == []:
-                    if not confidence:
-                        labels_set.append(np.argmax(probas[i]))
-                    else:
-                        topidx=np.argmax(probas[i])
-                        labels_set.append((topidx, probas[i,topidx]))
+                            labels_set.append((j, probas[i,j])))
                 labels.append(frozenset(labels_set))
             return labels
         else:
