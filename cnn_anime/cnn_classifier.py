@@ -260,7 +260,7 @@ class BaseCNNClassifier:
                         if not confidence:
                             labels_set.append(j)
                         else:
-                            labels_set.append((j, probas[i,j])))
+                            labels_set.append((j, probas[i,j]))
                 labels.append(frozenset(labels_set))
             return labels
         else:
